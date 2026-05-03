@@ -13,7 +13,7 @@ def load_feature_matrix(db_path):
     start_time = time.time()
     
     query = """
-WITH horse_race_history AS (
+    WITH horse_race_history AS (
         SELECT 
             rd.year || rd.month_day || rd.course_code || rd.times || rd.day || rd.race_number AS race_id,
             rd.year || '-' || substr(rd.month_day, 1, 2) || '-' || substr(rd.month_day, 3, 2) AS race_date,

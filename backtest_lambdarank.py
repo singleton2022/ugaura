@@ -4,9 +4,8 @@ import numpy as np
 import lightgbm as lgb
 from data_loader import load_feature_matrix
 
-# --- 設定 ---
-TEST_START_DATE = '2025-01-05'  # （既存の開始日付の変数名に合わせてください）
-TEST_END_DATE = '2026-04-26'    # ★新規追加: 集計の最終日付
+TEST_START_DATE = '2025-01-05'
+TEST_END_DATE = '2026-04-26'
 
 def prepare_features(df):
     categorical_features = [
@@ -25,7 +24,6 @@ def prepare_features(df):
 def run_lambdarank_backtest(db_path='C:/sqlite/jra_race.db'):
     print("--- 芝/ダート分離 LambdaRank バックテスト開始 ---")
     df = load_feature_matrix(db_path)
-    # test_df = df[df['race_date'] >= '2025-01-01'].copy()
     # 開始日付と終了日付の両方の条件を満たすデータを抽出
     test_df = df[(df['race_date'] >= TEST_START_DATE) & (df['race_date'] <= TEST_END_DATE)].copy()    
 
@@ -40,30 +38,24 @@ def run_lambdarank_backtest(db_path='C:/sqlite/jra_race.db'):
         'ucv_score_z', 'elo_rating_z', 'weight_carried_diff',
         'jockey_win_rate_100', 'jockey_top3_rate_100', 
         'straight_length', 'elo_diff_from_mean', 'ucv_elo_gap',
-        
-        # --- 追加特徴量 (馬体重関連) ---
         'horse_weight_num',
         'weight_change_num',
         'carried_weight_ratio',
-        # --- アプローチ2 (クロス特徴量) ---
         'weight_change_per_day',
         'is_fatigue_loss',
-        # --- Route D (枠順バイアス高解像度版・乗り替わり) ---
         'is_jockey_changed',
         'is_sameday_jockey_change',
         'bracket_win_rate_highres',
         'bracket_top3_rate_highres',
-        # --- 追加特徴量 ---
         'interval_days',
         'slope_count', 'woodchip_count',
-        # --- 調教密度 (追加) ---
         'slope_per_day', 'woodchip_per_day',
         'slope_total_time_4f_1', 'slope_total_time_4f_2',
         'slope_lap_time_2f_1f_1', 'slope_lap_time_2f_1f_2',
         'slope_lap_time_1f_0m_1', 'slope_lap_time_1f_0m_2',
         'woodchip_total_time_5f_1', 'woodchip_total_time_5f_2',
-        'woodchip_total_time_4f_1', 'woodchip_total_time_4f_2',  # 追加 
-        'woodchip_total_time_2f_1', 'woodchip_total_time_2f_2',  # 追加
+        'woodchip_total_time_4f_1', 'woodchip_total_time_4f_2',
+        'woodchip_total_time_2f_1', 'woodchip_total_time_2f_2',
         'woodchip_lap_time_1f_0m_1', 'woodchip_lap_time_1f_0m_2'
     ]
 

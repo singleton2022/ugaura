@@ -27,7 +27,6 @@ def train_lambdarank_model(df_subset, model_filename, category_name):
     """指定されたデータセットでLambdaRankを学習する関数"""
     print(f"\n========== 【{category_name}】 モデルの学習を開始 ==========")
     
-    # 追加: 坂路(slope)とウッドチップ(woodchip)の特徴量をnumeric_featuresに組み込む
     numeric_features = [
         'pace_score_top3',
         'prev_ucv_score', 'max_ucv_score_5', 'avg_ucv_score_5', 
@@ -40,28 +39,23 @@ def train_lambdarank_model(df_subset, model_filename, category_name):
         'jockey_win_rate_100', 'jockey_top3_rate_100', 
         'straight_length', 'elo_diff_from_mean', 'ucv_elo_gap',
         'interval_days',
-        # --- 追加特徴量 (馬体重関連) ---
         'horse_weight_num',
         'weight_change_num',
         'carried_weight_ratio',
-        # --- アプローチ2 (クロス特徴量) ---
         'weight_change_per_day',
         'is_fatigue_loss',
-        # --- Route D (枠順バイアス高解像度版・乗り替わり) ---
         'is_jockey_changed',
         'is_sameday_jockey_change',
         'bracket_win_rate_highres',
         'bracket_top3_rate_highres',
-        # 新規追加特徴量 (from data_loader.py Route B)
         'slope_count', 'woodchip_count',
-        # --- 調教密度 (追加) ---
         'slope_per_day', 'woodchip_per_day',
         'slope_total_time_4f_1', 'slope_total_time_4f_2',
         'slope_lap_time_2f_1f_1', 'slope_lap_time_2f_1f_2',
         'slope_lap_time_1f_0m_1', 'slope_lap_time_1f_0m_2',
         'woodchip_total_time_5f_1', 'woodchip_total_time_5f_2',
-        'woodchip_total_time_4f_1', 'woodchip_total_time_4f_2',  # 追加 
-        'woodchip_total_time_2f_1', 'woodchip_total_time_2f_2',  # 追加
+        'woodchip_total_time_4f_1', 'woodchip_total_time_4f_2',
+        'woodchip_total_time_2f_1', 'woodchip_total_time_2f_2',
         'woodchip_lap_time_1f_0m_1', 'woodchip_lap_time_1f_0m_2'
     ]
     
