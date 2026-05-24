@@ -12,7 +12,7 @@ def prepare_features(df):
     """カテゴリカル変数の安全な型変換を行う共通関数"""
     categorical_features = [
         'course_code', 'track_code', 'turf_condition_code', 'dirt_condition_code',
-        'bracket_number', 'horse_number', 'sex_code', 'distance'
+        'bracket_number', 'horse_number', 'sex_code', 'distance', 'prev_running_style'
     ]
     for col in categorical_features:
         if df[col].dtype.name == 'category':
@@ -56,7 +56,17 @@ def train_lambdarank_model(df_subset, model_filename, category_name):
         'woodchip_total_time_5f_1', 'woodchip_total_time_5f_2',
         'woodchip_total_time_4f_1', 'woodchip_total_time_4f_2',
         'woodchip_total_time_2f_1', 'woodchip_total_time_2f_2',
-        'woodchip_lap_time_1f_0m_1', 'woodchip_lap_time_1f_0m_2'
+        'woodchip_lap_time_1f_0m_1', 'woodchip_lap_time_1f_0m_2',
+        'prev_corner_4_ratio', 'avg_corner_4_ratio_5',
+        'is_local', 'is_small_turn', 'interaction_small_turn_lead',
+        'is_steep_slope', 'steep_slope_top3_rate', 'is_short_straight',
+        'interaction_short_straight_back', 'interaction_steep_slope_weight',
+        'is_true_escape_prev', 'dash_score_z', 'dash_score_in_race_rank',
+        'is_fastest_dash_in_race', 'escape_horse_count_in_race',
+        'interaction_escape_conflict_lead', 'interaction_escape_conflict_back',
+        'interaction_kokura_dirt_true_escape', 'interaction_kokura_dirt_escape_conflict',
+        'interaction_kokura_dirt_escape_conflict_back',
+        'interaction_nakayama_turf_lead', 'interaction_nakayama_turf_back'
     ]
     
     df_subset, categorical_features = prepare_features(df_subset)

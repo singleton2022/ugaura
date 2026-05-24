@@ -100,6 +100,8 @@ def load_feature_matrix(db_path):
             hri.horse_weight,
             hri.weight_change_sign,
             hri.weight_change,
+            hri.running_style,
+            hri.corner_4_order,
             fr.course_code,
             fr.distance,
             fr.track_code,
@@ -251,7 +253,50 @@ def load_feature_matrix(db_path):
     # Route D: 枠順バイアス（Target Encoding 高解像度版）と騎手乗り替わり
     # ---------------------------------------------------------
     # 1. 前走からの乗り替わり判定
+    # 1. 前走からの脚質・先行力に関する特徴量生成
+    df['corner_4_order_num'] = pd.to_numeric(df['corner_4_order'].astype(str).str.strip(), errors='coerce').fillna(0)
+    df['race_horse_count'] = df.groupby('race_id')['horse_id'].transform('count')
+    df['corner_4_ratio'] = df['corner_4_order_num'] / df['race_horse_count']
+    # '00' や 0 の無効な通過順は NaN とする
+    df.loc[df['corner_4_order_num'] <= 0, 'corner_4_ratio'] = np.nan
+
     df = df.sort_values(['horse_id', 'race_date_dt', 'race_id'])
+    
+    # 急坂フラグ（中山06, 中京07, 阪神09）
+    course_code_str = df['course_code'].astype(str).str.strip().str.zfill(2)
+    df['is_steep_slope'] = course_code_str.isin(['06', '07', '09']).astype(int)
+
+    # 過去の急坂コースにおける実績
+    df['steep_slope_top3_raw'] = np.where((df['is_steep_slope'] == 1) & (df['is_top3'] == 1), 1.0, 0.0)
+    df['steep_slope_top3_count'] = df.groupby('horse_id')['steep_slope_top3_raw'].transform(
+        lambda x: x.expanding().sum().shift().fillna(0.0)
+    )
+    df['steep_slope_run_count'] = df.groupby('horse_id')['is_steep_slope'].transform(
+        lambda x: x.expanding().sum().shift().fillna(0.0)
+    )
+    df['steep_slope_top3_rate'] = (df['steep_slope_top3_count'] / df['steep_slope_run_count']).fillna(0.0)
+    df = df.drop(columns=['steep_slope_top3_raw', 'steep_slope_top3_count', 'steep_slope_run_count'])
+
+    # 前走の4角通過順比率
+    df['prev_corner_4_ratio'] = df.groupby('horse_id')['corner_4_ratio'].shift(1)
+    df['prev_corner_4_ratio'] = df['prev_corner_4_ratio'].fillna(0.5)
+
+    # 過去5走の4角通過順比率平均値
+    df['avg_corner_4_ratio_5'] = df.groupby('horse_id')['corner_4_ratio'].transform(
+        lambda x: x.shift(1).rolling(5, min_periods=1).mean()
+    )
+    df['avg_corner_4_ratio_5'] = df['avg_corner_4_ratio_5'].fillna(0.5)
+
+    # 前走の脚質
+    df['prev_running_style'] = df.groupby('horse_id')['running_style'].shift(1)
+    df['prev_running_style'] = df['prev_running_style'].fillna('0').astype(str).str.strip()
+    df.loc[df['prev_running_style'].isin(['', 'None', 'nan']), 'prev_running_style'] = '0'
+
+    # 前走の実際の4角通過順位および真の逃げ馬フラグ（前走逃げ、かつ4角1番手）
+    df['prev_corner_4_order_num'] = df.groupby('horse_id')['corner_4_order_num'].shift(1)
+    df['is_true_escape_prev'] = ((df['prev_running_style'] == '1') & (df['prev_corner_4_order_num'] == 1.0)).astype(int)
+
+    # 前走からの乗り替わり判定
     df['prev_jockey_code'] = df.groupby('horse_id')['jockey_code'].shift(1)
     df['is_jockey_changed'] = (df['jockey_code'] != df['prev_jockey_code']).astype(int)
     df.loc[df['prev_jockey_code'].isna(), 'is_jockey_changed'] = 0
@@ -300,7 +345,71 @@ def load_feature_matrix(db_path):
     sl = np.where(course == '10', np.where(is_dirt, 291.3, 293.0), sl) 
     df['straight_length'] = sl
 
-    cat_cols = ['course_code', 'track_code', 'turf_condition_code', 'dirt_condition_code', 'bracket_number', 'horse_number', 'sex_code']
+    # ---------------------------------------------------------
+    # Route E: 新規追加特徴量（コース特性、小回り×先行力）
+    # ---------------------------------------------------------
+    # 主要4場（東京05, 中山06, 京都08, 阪神09）は0、ローカル6場（札幌01, 函館02, 福島03, 新潟04, 中京07, 小倉10）は1
+    local_courses = {'01', '02', '03', '04', '07', '10'}
+    df['is_local'] = df['course_code'].astype(str).str.strip().str.zfill(2).isin(local_courses).astype(int)
+    df['is_small_turn'] = (df['straight_length'] < 350.0).astype(int)
+    df['interaction_small_turn_lead'] = df['is_small_turn'] * (1.0 - df['avg_corner_4_ratio_5'])
+
+    # 短い直線フラグ（直線長 320m 未満）
+    df['is_short_straight'] = (df['straight_length'] < 320.0).astype(int)
+    # 短い直線×後方脚質（直線が短く、後方にいる馬へのペナルティ指標）
+    df['interaction_short_straight_back'] = df['is_short_straight'] * df['avg_corner_4_ratio_5']
+    # 急坂×馬体重（急坂でのタフさ・パワー指標）
+    df['interaction_steep_slope_weight'] = df['is_steep_slope'] * df['horse_weight_num']
+
+    # レース内でのダッシュ力偏差値（Z値）
+    dash_mean = df.groupby('race_id')['dash_score_median'].transform('mean')
+    dash_std = df.groupby('race_id')['dash_score_median'].transform('std')
+    df['dash_score_z'] = ((df['dash_score_median'] - dash_mean) / dash_std).fillna(0.0)
+
+    # レース内でのダッシュ力順位
+    df['dash_score_in_race_rank'] = df.groupby('race_id')['dash_score_median'].rank(ascending=False, method='min')
+
+    # レース内最速ダッシュフラグ
+    df['is_fastest_dash_in_race'] = (df['dash_score_in_race_rank'] == 1).astype(int)
+
+    # レース内の逃げ馬の合計頭数
+    df['escape_horse_count_in_race'] = df.groupby('race_id')['prev_running_style'].transform(lambda x: (x == '1').sum())
+
+    # 展開相互作用：逃げ馬頭数×先行力（先行激突ペナルティ）
+    df['interaction_escape_conflict_lead'] = df['escape_horse_count_in_race'] * (1.0 - df['avg_corner_4_ratio_5'])
+
+    # 展開相互作用：逃げ馬頭数×後方脚質（前崩れ台頭ボーナス）
+    df['interaction_escape_conflict_back'] = df['escape_horse_count_in_race'] * df['avg_corner_4_ratio_5']
+
+    # ---------------------------------------------------------
+    # アプローチB改: 競馬場特有・展開および脚質相互作用特徴量
+    # ---------------------------------------------------------
+    track_code_int_temp = pd.to_numeric(df['track_code'], errors='coerce').fillna(0)
+    is_turf_temp = track_code_int_temp.between(10, 22)
+    is_dirt_temp = track_code_int_temp.between(23, 29)
+
+    # 小倉ダートフラグ (course_code == '10' かつ ダート)
+    df['is_kokura_dirt'] = ((course_code_str == '10') & is_dirt_temp).astype(int)
+    
+    # 小倉ダート × 真の逃げ馬
+    df['interaction_kokura_dirt_true_escape'] = df['is_kokura_dirt'] * df['is_true_escape_prev']
+    
+    # 小倉ダート × 先行激突ペナルティ
+    df['interaction_kokura_dirt_escape_conflict'] = df['is_kokura_dirt'] * df['interaction_escape_conflict_lead']
+    
+    # 小倉ダート × 前崩れ差し馬ボーナス
+    df['interaction_kokura_dirt_escape_conflict_back'] = df['is_kokura_dirt'] * df['interaction_escape_conflict_back']
+    
+    # 中山芝フラグ (course_code == '06' かつ 芝)
+    df['is_nakayama_turf'] = ((course_code_str == '06') & is_turf_temp).astype(int)
+    
+    # 中山芝 × 先行機動力ボーナス
+    df['interaction_nakayama_turf_lead'] = df['is_nakayama_turf'] * (1.0 - df['avg_corner_4_ratio_5'])
+    
+    # 中山芝 × 差し馬ペナルティ
+    df['interaction_nakayama_turf_back'] = df['is_nakayama_turf'] * df['avg_corner_4_ratio_5']
+
+    cat_cols = ['course_code', 'track_code', 'turf_condition_code', 'dirt_condition_code', 'bracket_number', 'horse_number', 'sex_code', 'prev_running_style']
     for col in cat_cols:
         if isinstance(df[col].dtype, pd.CategoricalDtype):
             df[col] = df[col].astype('object')
