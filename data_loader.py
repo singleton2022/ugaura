@@ -78,7 +78,8 @@ def load_feature_matrix(db_path):
             rd.year || rd.month_day || rd.course_code || rd.times || rd.day || rd.race_number AS race_id,
             rd.year || '-' || substr(rd.month_day, 1, 2) || '-' || substr(rd.month_day, 3, 2) AS race_date,
             rd.year, rd.month_day, rd.course_code, rd.times, rd.day, rd.race_number,
-            rd.distance, rd.track_code, rd.turf_condition_code, rd.dirt_condition_code
+            rd.distance, rd.track_code, rd.turf_condition_code, rd.dirt_condition_code,
+            rd.weather_code, rd.grade_code, rd.race_type_code, rd.weight_type_code, rd.cond_code_youngest
         FROM race_detail rd
         WHERE rd.year >= '2015'
           AND CAST(rd.track_code AS INTEGER) < 51 
@@ -107,6 +108,11 @@ def load_feature_matrix(db_path):
             fr.track_code,
             fr.turf_condition_code,
             fr.dirt_condition_code,
+            fr.weather_code,
+            fr.grade_code,
+            fr.race_type_code,
+            fr.weight_type_code,
+            fr.cond_code_youngest,
             hri.jockey_code_before,
             CASE WHEN CAST(hri.final_order AS INTEGER) = 1 THEN 1 ELSE 0 END AS is_win,
             CASE WHEN CAST(hri.final_order AS INTEGER) <= 3 THEN 1 ELSE 0 END AS is_top3
@@ -197,7 +203,7 @@ def load_feature_matrix(db_path):
     df['max_ucv_score_5_rank'] = df.groupby('race_id')['max_ucv_score_5'].rank(ascending=False, method='min')
     ucv_mean = df.groupby('race_id')['avg_ucv_score_5'].transform('mean')
     ucv_std = df.groupby('race_id')['avg_ucv_score_5'].transform('std')
-    df['ucv_score_z'] = ((df['avg_ucv_score_5'] - ucv_mean) / ucv_std).fillna(0.0)
+    df['ucv_score_z'] = np.where(ucv_std > 1e-6, (df['avg_ucv_score_5'] - ucv_mean) / ucv_std, 0.0)
 
     df['ucv_3f_rank'] = df.groupby('race_id')['avg_ucv_3f_5'].rank(ascending=False, method='min')
     df['ucv_3f_gap_avg_5'] = df['avg_ucv_score_5'] - df['avg_ucv_3f_5']
@@ -205,7 +211,7 @@ def load_feature_matrix(db_path):
     df['elo_rating_rank'] = df.groupby('race_id')['target_elo_rating'].rank(ascending=False, method='min')
     elo_mean = df.groupby('race_id')['target_elo_rating'].transform('mean')
     elo_std = df.groupby('race_id')['target_elo_rating'].transform('std')
-    df['elo_rating_z'] = ((df['target_elo_rating'] - elo_mean) / elo_std).fillna(0.0)
+    df['elo_rating_z'] = np.where(elo_std > 1e-6, (df['target_elo_rating'] - elo_mean) / elo_std, 0.0)
     df['elo_diff_from_mean'] = df['target_elo_rating'] - elo_mean
 
     df['ucv_elo_gap'] = df['ucv_score_z'] - df['elo_rating_z']
@@ -364,7 +370,7 @@ def load_feature_matrix(db_path):
     # レース内でのダッシュ力偏差値（Z値）
     dash_mean = df.groupby('race_id')['dash_score_median'].transform('mean')
     dash_std = df.groupby('race_id')['dash_score_median'].transform('std')
-    df['dash_score_z'] = ((df['dash_score_median'] - dash_mean) / dash_std).fillna(0.0)
+    df['dash_score_z'] = np.where(dash_std > 1e-6, (df['dash_score_median'] - dash_mean) / dash_std, 0.0)
 
     # レース内でのダッシュ力順位
     df['dash_score_in_race_rank'] = df.groupby('race_id')['dash_score_median'].rank(ascending=False, method='min')
@@ -374,6 +380,13 @@ def load_feature_matrix(db_path):
 
     # レース内の逃げ馬の合計頭数
     df['escape_horse_count_in_race'] = df.groupby('race_id')['prev_running_style'].transform(lambda x: (x == '1').sum())
+
+    # 先行馬の合計頭数
+    df['lead_horse_count_in_race'] = df.groupby('race_id')['prev_running_style'].transform(lambda x: (x == '2').sum())
+    # 逃げ＋先行馬の合計頭数
+    df['front_active_horse_count_in_race'] = df['escape_horse_count_in_race'] + df['lead_horse_count_in_race']
+    # 逃げ＋先行馬の割合
+    df['front_active_horse_ratio'] = (df['front_active_horse_count_in_race'] / df['race_horse_count']).fillna(0.0)
 
     # 展開相互作用：逃げ馬頭数×先行力（先行激突ペナルティ）
     df['interaction_escape_conflict_lead'] = df['escape_horse_count_in_race'] * (1.0 - df['avg_corner_4_ratio_5'])
@@ -409,7 +422,9 @@ def load_feature_matrix(db_path):
     # 中山芝 × 差し馬ペナルティ
     df['interaction_nakayama_turf_back'] = df['is_nakayama_turf'] * df['avg_corner_4_ratio_5']
 
-    cat_cols = ['course_code', 'track_code', 'turf_condition_code', 'dirt_condition_code', 'bracket_number', 'horse_number', 'sex_code', 'prev_running_style']
+    cat_cols = ['course_code', 'track_code', 'turf_condition_code', 'dirt_condition_code', 
+                'bracket_number', 'horse_number', 'sex_code', 'prev_running_style',
+                'weather_code', 'grade_code', 'race_type_code', 'weight_type_code', 'cond_code_youngest']
     for col in cat_cols:
         if isinstance(df[col].dtype, pd.CategoricalDtype):
             df[col] = df[col].astype('object')
@@ -433,16 +448,45 @@ def load_feature_matrix(db_path):
         for col in cols_to_extract:
             tdf[col + '_sec'] = pd.to_numeric(tdf[col].replace('0000', np.nan), errors='coerce') / 10.0
             
+        # --- 追加特徴量の算出開始 ---
+        tdf = tdf.sort_values(['blood_reg_number', 'training_date_dt'])
+        
+        # 1. 前日までの自己ベストタイム (データリーク防止のためgroupbyしてtransformとshift(1)を使用)
+        tdf['prev_best_time'] = tdf.groupby('blood_reg_number')[sort_col + '_sec'].transform(
+            lambda x: x.cummin().shift(1)
+        )
+        # 自己ベスト比率
+        tdf['best_time_ratio'] = (tdf[sort_col + '_sec'] / tdf['prev_best_time']).fillna(1.0)
+        
+        # 2. ラスト1Fの加速ラップ（終い重点）
+        if prefix == 'slope':
+            # 坂路: ラスト2F目(lap_time_2f_1f_sec) と ラスト1F(lap_time_1f_0m_sec) の比較
+            tdf['lap_diff'] = tdf['lap_time_2f_1f_sec'] - tdf['lap_time_1f_0m_sec']
+            tdf['is_acceleration'] = (tdf['lap_diff'] > 0.0).astype(float)
+        elif prefix == 'woodchip':
+            # ウッドチップ: ラスト2Fタイム(total_time_2f_sec) と ラスト1F(lap_time_1f_0m_sec) の比較
+            # ラスト2F目のハロンタイム ＝ total_time_2f_sec - lap_time_1f_0m_sec
+            tdf['lap_diff'] = (tdf['total_time_2f_sec'] - tdf['lap_time_1f_0m_sec']) - tdf['lap_time_1f_0m_sec']
+            tdf['is_acceleration'] = (tdf['lap_diff'] > 0.0).astype(float)
+        else:
+            tdf['lap_diff'] = 0.0
+            tdf['is_acceleration'] = 0.0
+            
+        tdf['lap_diff'] = tdf['lap_diff'].fillna(0.0)
+        tdf['is_acceleration'] = tdf['is_acceleration'].fillna(0.0)
+        # --- 追加特徴量の算出終了 ---
+            
         sec_cols = [c + '_sec' for c in cols_to_extract]
+        new_feature_cols = ['best_time_ratio', 'lap_diff', 'is_acceleration']
         
         df_dates = df[['race_id', 'horse_id', 'race_date_dt', 'prev_race_date_dt']]
-        tdf_target = tdf[['blood_reg_number', 'training_date_dt'] + sec_cols]
+        tdf_target = tdf[['blood_reg_number', 'training_date_dt'] + sec_cols + new_feature_cols]
         
         log(f"  - {prefix} 結合前: メイン {len(df_dates)}件 / 調教 {len(tdf_target)}件")
         
         # --- DuckDBによる非等価結合 (Range Join) ---
-        # Pandasのmergeによる直積爆発を回避し、条件に合致する行のみをSQLエンジンで高速抽出する
-        sec_cols_str = ", ".join([f't."{c}"' for c in sec_cols])
+        all_select_cols = [f't."{c}"' for c in (sec_cols + new_feature_cols)]
+        sec_cols_str = ", ".join(all_select_cols)
         query = f"""
             SELECT 
                 r.race_id, 
@@ -466,7 +510,6 @@ def load_feature_matrix(db_path):
         if valid_train.empty:
             return pd.DataFrame(counts).reset_index()
 
-        # 以降のロジックは既存と同等
         two_weeks = valid_train[(valid_train['race_date_dt'] - valid_train['training_date_dt']).dt.days <= 14]
         sorted_train = two_weeks.dropna(subset=[sort_col + '_sec']).sort_values(['race_id', 'horse_id', sort_col + '_sec'], ascending=[True, True, True])
         fastest = sorted_train.groupby(['race_id', 'horse_id']).head(2).copy()
@@ -475,7 +518,7 @@ def load_feature_matrix(db_path):
             return pd.DataFrame(counts).reset_index()
 
         fastest['rank'] = fastest.groupby(['race_id', 'horse_id']).cumcount() + 1
-        value_cols = [c + '_sec' for c in feature_cols]
+        value_cols = [c + '_sec' for c in feature_cols] + new_feature_cols
         pivoted = fastest.pivot(index=['race_id', 'horse_id'], columns='rank', values=value_cols)
         pivoted.columns = [f"{prefix}_{col.replace('_sec', '')}_{rank}" for col, rank in pivoted.columns]
         
@@ -510,11 +553,94 @@ def load_feature_matrix(db_path):
     for prefix, f_cols in [('slope', feature_cols_slope), ('woodchip', feature_cols_wc)]:
         if f'{prefix}_count' in df.columns:
             df[f'{prefix}_count'] = df[f'{prefix}_count'].fillna(0)
+            
+        # タイム系の補完 (99.9秒)
         for col in f_cols:
             for rank in [1, 2]:
                 cname = f'{prefix}_{col}_{rank}'
                 if cname in df.columns:
                     df[cname] = df[cname].fillna(99.9)
+                    
+        # 新調教特徴量の補完
+        for rank in [1, 2]:
+            cname = f'{prefix}_best_time_ratio_{rank}'
+            if cname in df.columns:
+                df[cname] = df[cname].fillna(1.0)
+                
+            cname = f'{prefix}_lap_diff_{rank}'
+            if cname in df.columns:
+                df[cname] = df[cname].fillna(0.0)
+                
+            cname = f'{prefix}_is_acceleration_{rank}'
+            if cname in df.columns:
+                df[cname] = df[cname].fillna(0.0)
+
+    # ---------------------------------------------------------
+    # ペース予測モデルによる pred_lap_diff の追加
+    # ---------------------------------------------------------
+    log("ペース予測モデルの推論中...")
+    try:
+        import os
+        import lightgbm as lgb
+        pace_model_path = os.path.join(os.path.dirname(__file__), 'lgbm_pace_model.txt') if '__file__' in locals() else 'lgbm_pace_model.txt'
+        if not os.path.exists(pace_model_path):
+            pace_model_path = 'lgbm_pace_model.txt'
+            
+        if os.path.exists(pace_model_path):
+            booster_pace = lgb.Booster(model_file=pace_model_path)
+            
+            # 必要なカラムの準備
+            pace_df = df[[
+                'race_id', 'distance', 'course_code', 'track_code', 'turf_condition_code', 'dirt_condition_code', 
+                'race_horse_count', 'pace_score_top3', 'leader_margin',
+                'straight_length', 'is_steep_slope', 'is_local', 
+                'escape_horse_count_in_race', 'lead_horse_count_in_race', 
+                'front_active_horse_count_in_race', 'front_active_horse_ratio',
+                'weather_code', 'grade_code', 'race_type_code', 'weight_type_code', 'cond_code_youngest'
+            ]].drop_duplicates(subset=['race_id']).copy()
+            pace_df = pace_df.rename(columns={'race_horse_count': 'started_count'})
+            
+            # 型変換
+            pace_df['distance'] = pd.to_numeric(pace_df['distance'], errors='coerce').fillna(1600).astype(int)
+            pace_df['started_count'] = pd.to_numeric(pace_df['started_count'], errors='coerce').fillna(10).astype(int)
+            pace_df['pace_score_top3'] = pace_df['pace_score_top3'].astype(float).fillna(0.5)
+            pace_df['leader_margin'] = pace_df['leader_margin'].astype(float).fillna(0.0)
+            pace_df['straight_length'] = pace_df['straight_length'].astype(float).fillna(300.0)
+            pace_df['is_steep_slope'] = pace_df['is_steep_slope'].astype(int).fillna(0)
+            pace_df['is_local'] = pace_df['is_local'].astype(int).fillna(0)
+            pace_df['escape_horse_count_in_race'] = pace_df['escape_horse_count_in_race'].astype(int).fillna(0)
+            pace_df['lead_horse_count_in_race'] = pace_df['lead_horse_count_in_race'].astype(int).fillna(0)
+            pace_df['front_active_horse_count_in_race'] = pace_df['front_active_horse_count_in_race'].astype(int).fillna(0)
+            pace_df['front_active_horse_ratio'] = pace_df['front_active_horse_ratio'].astype(float).fillna(0.0)
+            
+            cat_cols = ['course_code', 'track_code', 'turf_condition_code', 'dirt_condition_code',
+                        'weather_code', 'grade_code', 'race_type_code', 'weight_type_code', 'cond_code_youngest']
+            for col in cat_cols:
+                pace_df[col] = pace_df[col].astype(str).str.strip().fillna('-1').astype('category')
+                
+            pace_features = [
+                'distance', 'course_code', 'track_code', 
+                'turf_condition_code', 'dirt_condition_code', 
+                'started_count', 'pace_score_top3', 'leader_margin',
+                'straight_length', 'is_steep_slope', 'is_local',
+                'escape_horse_count_in_race', 'lead_horse_count_in_race', 
+                'front_active_horse_count_in_race', 'front_active_horse_ratio',
+                'weather_code', 'grade_code', 'race_type_code', 'weight_type_code', 'cond_code_youngest'
+            ]
+            
+            # 推論
+            pace_df['pred_lap_diff'] = booster_pace.predict(pace_df[pace_features])
+            
+            # メインのdfにマージ
+            df = df.merge(pace_df[['race_id', 'pred_lap_diff']], on='race_id', how='left')
+            df['pred_lap_diff'] = df['pred_lap_diff'].fillna(0.0)
+            log("ペース予測モデルの推論完了")
+        else:
+            log("警告: ペース予測モデルファイルが見つかりません。pred_lap_diff を 0.0 で初期化します。")
+            df['pred_lap_diff'] = 0.0
+    except Exception as e:
+        log(f"警告: ペース予測モデルの推論中にエラーが発生しました: {e}")
+        df['pred_lap_diff'] = 0.0
 
     df = df.drop(columns=['race_date_dt', 'prev_race_date_dt'], errors='ignore')
     log(f"[6/6] 全処理完了 ({time.time() - start_time:.2f}秒)")

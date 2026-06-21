@@ -28,6 +28,7 @@ def train_lambdarank_model(df_subset, model_filename, category_name):
     print(f"\n========== 【{category_name}】 モデルの学習を開始 ==========")
     
     numeric_features = [
+        'pred_lap_diff',
         'pace_score_top3',
         'prev_ucv_score', 'max_ucv_score_5', 'avg_ucv_score_5', 
         'avg_ucv_3f_5', 'max_ucv_3f_5', 'ucv_3f_gap_avg_5', 'ucv_3f_rank',
@@ -57,6 +58,12 @@ def train_lambdarank_model(df_subset, model_filename, category_name):
         'woodchip_total_time_4f_1', 'woodchip_total_time_4f_2',
         'woodchip_total_time_2f_1', 'woodchip_total_time_2f_2',
         'woodchip_lap_time_1f_0m_1', 'woodchip_lap_time_1f_0m_2',
+        'slope_best_time_ratio_1', 'slope_best_time_ratio_2',
+        'slope_lap_diff_1', 'slope_lap_diff_2',
+        'slope_is_acceleration_1', 'slope_is_acceleration_2',
+        'woodchip_best_time_ratio_1', 'woodchip_best_time_ratio_2',
+        'woodchip_lap_diff_1', 'woodchip_lap_diff_2',
+        'woodchip_is_acceleration_1', 'woodchip_is_acceleration_2',
         'prev_corner_4_ratio', 'avg_corner_4_ratio_5',
         'is_local', 'is_small_turn', 'interaction_small_turn_lead',
         'is_steep_slope', 'steep_slope_top3_rate', 'is_short_straight',

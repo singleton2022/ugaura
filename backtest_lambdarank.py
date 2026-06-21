@@ -14,6 +14,9 @@ except AttributeError:
 TEST_START_DATE = '2025-01-05'
 TEST_END_DATE = '2026-04-26'
 
+# フィルタリング設定（Trueでダート中長距離に限定、Falseで全レース投資）
+APPLY_FILTER = False
+
 def prepare_features(df):
     categorical_features = [
         'course_code', 'track_code', 'turf_condition_code', 'dirt_condition_code',
@@ -35,6 +38,7 @@ def run_lambdarank_backtest(db_path='C:/sqlite/jra_race.db'):
     test_df = df[(df['race_date'] >= TEST_START_DATE) & (df['race_date'] <= TEST_END_DATE)].copy()    
 
     numeric_features = [
+        'pred_lap_diff',
         'pace_score_top3',
         'prev_ucv_score', 'max_ucv_score_5', 'avg_ucv_score_5', 
         'avg_ucv_3f_5', 'max_ucv_3f_5', 'ucv_3f_gap_avg_5', 'ucv_3f_rank',
@@ -64,6 +68,12 @@ def run_lambdarank_backtest(db_path='C:/sqlite/jra_race.db'):
         'woodchip_total_time_4f_1', 'woodchip_total_time_4f_2',
         'woodchip_total_time_2f_1', 'woodchip_total_time_2f_2',
         'woodchip_lap_time_1f_0m_1', 'woodchip_lap_time_1f_0m_2',
+        'slope_best_time_ratio_1', 'slope_best_time_ratio_2',
+        'slope_lap_diff_1', 'slope_lap_diff_2',
+        'slope_is_acceleration_1', 'slope_is_acceleration_2',
+        'woodchip_best_time_ratio_1', 'woodchip_best_time_ratio_2',
+        'woodchip_lap_diff_1', 'woodchip_lap_diff_2',
+        'woodchip_is_acceleration_1', 'woodchip_is_acceleration_2',
         'prev_corner_4_ratio', 'avg_corner_4_ratio_5',
         'is_local', 'is_small_turn', 'interaction_small_turn_lead',
         'is_steep_slope', 'steep_slope_top3_rate', 'is_short_straight',
@@ -77,6 +87,47 @@ def run_lambdarank_backtest(db_path='C:/sqlite/jra_race.db'):
     ]
 
     # トラックコードによる分割
+    # ---------------------------------------------------------
+    # 確率キャリブレーション（Platt Scaling）のフィッティング
+    # ---------------------------------------------------------
+    print("\n--- 確率キャリブレーション（Platt Scaling）のフィッティング ---")
+    from sklearn.linear_model import LogisticRegression
+
+    # 検証データ（2024年）をロードしてフィッティングに使用
+    val_df = df[(df['race_date'] >= '2024-01-01') & (df['race_date'] <= '2024-12-31')].copy()
+    
+    # 芝とダートのモデルをロード
+    booster_turf = lgb.Booster(model_file='lgbm_model_turf.txt')
+    booster_dirt = lgb.Booster(model_file='lgbm_model_dirt.txt')
+
+    # 検証データの芝とダートのマスク
+    val_track_code = pd.to_numeric(val_df['track_code'], errors='coerce').fillna(0)
+    is_turf_val = val_track_code.between(10, 22)
+    is_dirt_val = val_track_code.between(23, 29)
+
+    # 芝用キャリブレータの学習
+    val_turf = val_df[is_turf_val].copy()
+    val_turf, cat_cols = prepare_features(val_turf)
+    actual_features_turf = [col for col in (cat_cols + numeric_features) if col in val_turf.columns]
+    val_turf['predict_score'] = booster_turf.predict(val_turf[actual_features_turf])
+    
+    calibrator_turf = LogisticRegression(C=1e9, random_state=42)
+    calibrator_turf.fit(val_turf['predict_score'].values.reshape(-1, 1), val_turf['is_win'])
+    print(f"芝用キャリブレータ学習完了: 係数={calibrator_turf.coef_[0][0]:.4f}, 切片={calibrator_turf.intercept_[0]:.4f}")
+
+    # ダート用キャリブレータの学習
+    val_dirt = val_df[is_dirt_val].copy()
+    val_dirt, _ = prepare_features(val_dirt)
+    actual_features_dirt = [col for col in (cat_cols + numeric_features) if col in val_dirt.columns]
+    val_dirt['predict_score'] = booster_dirt.predict(val_dirt[actual_features_dirt])
+    
+    calibrator_dirt = LogisticRegression(C=1e9, random_state=42)
+    calibrator_dirt.fit(val_dirt['predict_score'].values.reshape(-1, 1), val_dirt['is_win'])
+    print(f"ダート用キャリブレータ学習完了: 係数={calibrator_dirt.coef_[0][0]:.4f}, 切片={calibrator_dirt.intercept_[0]:.4f}")
+
+    # ---------------------------------------------------------
+    # テストデータの予測とロジット算出
+    # ---------------------------------------------------------
     track_code_int = pd.to_numeric(test_df['track_code'], errors='coerce').fillna(0)
     is_turf_mask = track_code_int.between(10, 22)
     is_dirt_mask = track_code_int.between(23, 29)
@@ -84,16 +135,16 @@ def run_lambdarank_backtest(db_path='C:/sqlite/jra_race.db'):
     df_turf = test_df[is_turf_mask].copy()
     df_dirt = test_df[is_dirt_mask].copy()
 
-    # それぞれ推論
+    # それぞれ推論とキャリブレーションロジット算出
     df_turf, cat_cols = prepare_features(df_turf)
     actual_features_turf = [col for col in (cat_cols + numeric_features) if col in df_turf.columns]
-    booster_turf = lgb.Booster(model_file='lgbm_model_turf.txt')
     df_turf['predict_score'] = booster_turf.predict(df_turf[actual_features_turf])
+    df_turf['calibrated_logit'] = calibrator_turf.decision_function(df_turf['predict_score'].values.reshape(-1, 1))
 
     df_dirt, _ = prepare_features(df_dirt)
     actual_features_dirt = [col for col in (cat_cols + numeric_features) if col in df_dirt.columns]
-    booster_dirt = lgb.Booster(model_file='lgbm_model_dirt.txt')
     df_dirt['predict_score'] = booster_dirt.predict(df_dirt[actual_features_dirt])
+    df_dirt['calibrated_logit'] = calibrator_dirt.decision_function(df_dirt['predict_score'].values.reshape(-1, 1))
 
     # 結果の結合とランク付け
     result_df = pd.concat([df_turf, df_dirt])
@@ -117,13 +168,12 @@ def run_lambdarank_backtest(db_path='C:/sqlite/jra_race.db'):
     # ---------------------------------------------------------
     # 期待値（EV: Expected Value）の算出と購入対象の絞り込み
     # ---------------------------------------------------------
-    # 各レースごとに、LambdaRankのスコアをSoftmax関数で推定勝率に変換
-    def softmax(x):
-        T = 1.0  # Temperature (温度パラメータ) で確率の極端な偏りを調整
-        e_x = np.exp((x - np.max(x)) / T)
+    # 各レースごとに、キャリブレーションされたロジットをSoftmax関数で推定勝率に変換
+    def softmax_logit(x):
+        e_x = np.exp(x - np.max(x))
         return e_x / e_x.sum()
 
-    result_df['estimated_prob'] = result_df.groupby('race_id')['predict_score'].transform(softmax)
+    result_df['estimated_prob'] = result_df.groupby('race_id')['calibrated_logit'].transform(softmax_logit)
     
     # 期待値 ＝ 推定勝率 × 単勝オッズ
     result_df['expected_value'] = result_df['estimated_prob'] * result_df['win_odds']
@@ -158,7 +208,17 @@ def run_lambdarank_backtest(db_path='C:/sqlite/jra_race.db'):
     # 購入条件の設定：
     # 1. 予測1位であること
     # 2. 期待値がそのコースのしきい値以上であること
-    buy_df = result_df[(result_df['score_rank'] == 1) & (result_df['expected_value'] >= result_df['ev_threshold'])].copy()
+    buy_mask = (result_df['score_rank'] == 1) & (result_df['expected_value'] >= result_df['ev_threshold'])
+
+    if APPLY_FILTER:
+        # フィルタリング条件：ダートかつ距離1900m以上（中長距離）
+        filter_mask = (result_df['track_type'] == 'ダート') & (pd.to_numeric(result_df['distance']) >= 1900)
+        buy_mask = buy_mask & filter_mask
+        print("\n[情報] フィルタリングが有効です：投資対象を「ダート中長距離（1900m以上）」に限定します。")
+    else:
+        print("\n[情報] フィルタリングは無効です：全コースを投資対象とします。")
+
+    buy_df = result_df[buy_mask].copy()
 
     print(f"\n【購入シミュレーション】")
     print(f"予測1位の全頭数: {len(result_df[result_df['score_rank'] == 1])}")
