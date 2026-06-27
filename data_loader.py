@@ -19,6 +19,9 @@ def load_feature_matrix(db_path):
             rd.year || '-' || substr(rd.month_day, 1, 2) || '-' || substr(rd.month_day, 3, 2) AS race_date,
             -- レース間隔算出用の前走日付取得（ここで計算しても問題ありません）
             LAG(rd.year || '-' || substr(rd.month_day, 1, 2) || '-' || substr(rd.month_day, 3, 2)) OVER (PARTITION BY hri.blood_reg_number ORDER BY rd.year || rd.month_day || rd.course_code || rd.times || rd.day || rd.race_number ASC) AS prev_race_date,
+            -- 前走からの距離変化・昇級判定用の前走データ取得
+            LAG(rd.distance) OVER (PARTITION BY hri.blood_reg_number ORDER BY rd.year || rd.month_day || rd.course_code || rd.times || rd.day || rd.race_number ASC) AS prev_distance,
+            LAG(rd.cond_code_youngest) OVER (PARTITION BY hri.blood_reg_number ORDER BY rd.year || rd.month_day || rd.course_code || rd.times || rd.day || rd.race_number ASC) AS prev_cond_code_youngest,
             hri.blood_reg_number AS horse_id,
             ucv.ucv_score,
             u3f.ucv_3f_score
@@ -90,12 +93,15 @@ def load_feature_matrix(db_path):
             fr.race_id,
             fr.race_date,
             hrh.prev_race_date,
+            hrh.prev_distance,
+            hrh.prev_cond_code_youngest,
             hri.blood_reg_number AS horse_id,
             hri.horse_number,
             hri.bracket_number,
             hri.sex_code,
             hri.horse_age,
             hri.weight_carried,
+            hri.affiliation_code,
             hri.jockey_code,
             hri.win_odds,
             hri.horse_weight,
@@ -224,6 +230,25 @@ def load_feature_matrix(db_path):
     df['prev_race_date_dt'] = df['prev_race_date_dt'].fillna(df['race_date_dt'] - pd.Timedelta(days=90))
     # 前走からの経過日数（interval_days）を算出
     df['interval_days'] = (df['race_date_dt'] - df['prev_race_date_dt']).dt.days
+
+    # --- 新規特徴量の追加（前走からの距離変化、昇級フラグ、東西所属） ---
+    df['prev_distance_num'] = pd.to_numeric(df['prev_distance'], errors='coerce')
+    df['prev_distance_num'] = df['prev_distance_num'].fillna(df['distance'])
+    df['distance_change'] = df['distance'] - df['prev_distance_num']
+
+    class_mapping = {
+        '701': 1, '702': 1, '703': 1,
+        '003': 2, '004': 2, '005': 2,
+        '007': 3, '009': 3, '010': 3,
+        '014': 4, '015': 4, '016': 4,
+        '000': 5, '999': 5
+    }
+    df['curr_class_level'] = df['cond_code_youngest'].astype(str).str.strip().map(class_mapping).fillna(2)
+    df['prev_class_level'] = df['prev_cond_code_youngest'].astype(str).str.strip().map(class_mapping)
+    df['prev_class_level'] = df['prev_class_level'].fillna(df['curr_class_level'])
+    df['is_promoted'] = (df['curr_class_level'] > df['prev_class_level']).astype(int)
+
+    df['affiliation_code'] = df['affiliation_code'].astype(str).str.strip().fillna('0')
 
     # ---------------------------------------------------------
     # 馬体重および派生特徴量の計算
@@ -422,9 +447,30 @@ def load_feature_matrix(db_path):
     # 中山芝 × 差し馬ペナルティ
     df['interaction_nakayama_turf_back'] = df['is_nakayama_turf'] * df['avg_corner_4_ratio_5']
 
+    # ---------------------------------------------------------
+    # 新規追加特徴量: 直線長と脚質の交互作用特徴量
+    # ---------------------------------------------------------
+    df['interaction_straight_length_lead'] = df['straight_length'] * (1.0 - df['avg_corner_4_ratio_5'])
+    df['interaction_straight_length_back'] = df['straight_length'] * df['avg_corner_4_ratio_5']
+
+    # 中京ダートフラグ (course_code == '07' かつ ダート)
+    df['is_chukyo_dirt'] = ((course_code_str == '07') & is_dirt_temp).astype(int)
+    df['interaction_chukyo_dirt_lead'] = df['is_chukyo_dirt'] * (1.0 - df['avg_corner_4_ratio_5'])
+    df['interaction_chukyo_dirt_back'] = df['is_chukyo_dirt'] * df['avg_corner_4_ratio_5']
+
+    # 小倉ダート × 先行・差し交互作用
+    df['interaction_kokura_dirt_lead'] = df['is_kokura_dirt'] * (1.0 - df['avg_corner_4_ratio_5'])
+    df['interaction_kokura_dirt_back'] = df['is_kokura_dirt'] * df['avg_corner_4_ratio_5']
+
+    # 福島ダート1150mフラグ (course_code == '03' かつ ダート かつ 距離1150m)
+    df['is_fukushima_dirt_1150'] = ((course_code_str == '03') & is_dirt_temp & (df['distance'] == 1150)).astype(int)
+    df['interaction_fukushima_dirt_1150_lead'] = df['is_fukushima_dirt_1150'] * (1.0 - df['avg_corner_4_ratio_5'])
+    df['interaction_fukushima_dirt_1150_back'] = df['is_fukushima_dirt_1150'] * df['avg_corner_4_ratio_5']
+
     cat_cols = ['course_code', 'track_code', 'turf_condition_code', 'dirt_condition_code', 
                 'bracket_number', 'horse_number', 'sex_code', 'prev_running_style',
-                'weather_code', 'grade_code', 'race_type_code', 'weight_type_code', 'cond_code_youngest']
+                'weather_code', 'grade_code', 'race_type_code', 'weight_type_code', 'cond_code_youngest',
+                'affiliation_code']
     for col in cat_cols:
         if isinstance(df[col].dtype, pd.CategoricalDtype):
             df[col] = df[col].astype('object')
@@ -648,5 +694,5 @@ def load_feature_matrix(db_path):
     return df
 
 if __name__ == "__main__":
-    db_path = 'C:/sqlite/jra_race.db'
+    db_path = 'C:/Ugaura/sqlite/jra_race.db'
     load_feature_matrix(db_path)

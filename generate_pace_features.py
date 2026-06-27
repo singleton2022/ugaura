@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import time
 
-DB_PATH = "C:/sqlite/jra_race.db"
+DB_PATH = "C:/Ugaura/sqlite/jra_race.db"
 
 def calculate_and_save_features():
     total_start = time.time()

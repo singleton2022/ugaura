@@ -20,7 +20,8 @@ APPLY_FILTER = False
 def prepare_features(df):
     categorical_features = [
         'course_code', 'track_code', 'turf_condition_code', 'dirt_condition_code',
-        'bracket_number', 'horse_number', 'sex_code', 'distance', 'prev_running_style'
+        'bracket_number', 'horse_number', 'sex_code', 'distance', 'prev_running_style',
+        'affiliation_code'
     ]
     for col in categorical_features:
         if df[col].dtype.name == 'category':
@@ -31,8 +32,8 @@ def prepare_features(df):
             df[col] = df[col].fillna(-1).astype('category')
     return df, categorical_features
 
-def run_lambdarank_backtest(db_path='C:/sqlite/jra_race.db'):
-    print("--- 芝/ダート分離 LambdaRank バックテスト開始 ---")
+def run_lambdarank_backtest(db_path='C:/Ugaura/sqlite/jra_race.db', calibration_method='platt'):
+    print(f"--- 芝/ダート分離 LambdaRank バックテスト開始 (キャリブレーション: {calibration_method}) ---")
     df = load_feature_matrix(db_path)
     # 開始日付と終了日付の両方の条件を満たすデータを抽出
     test_df = df[(df['race_date'] >= TEST_START_DATE) & (df['race_date'] <= TEST_END_DATE)].copy()    
@@ -83,15 +84,13 @@ def run_lambdarank_backtest(db_path='C:/sqlite/jra_race.db'):
         'interaction_escape_conflict_lead', 'interaction_escape_conflict_back',
         'interaction_kokura_dirt_true_escape', 'interaction_kokura_dirt_escape_conflict',
         'interaction_kokura_dirt_escape_conflict_back',
-        'interaction_nakayama_turf_lead', 'interaction_nakayama_turf_back'
+        'interaction_nakayama_turf_lead', 'interaction_nakayama_turf_back',
+        'distance_change', 'is_promoted',
+        'interaction_straight_length_lead', 'interaction_straight_length_back',
+        'interaction_chukyo_dirt_lead', 'interaction_chukyo_dirt_back',
+        'interaction_kokura_dirt_lead', 'interaction_kokura_dirt_back',
+        'interaction_fukushima_dirt_1150_lead', 'interaction_fukushima_dirt_1150_back'
     ]
-
-    # トラックコードによる分割
-    # ---------------------------------------------------------
-    # 確率キャリブレーション（Platt Scaling）のフィッティング
-    # ---------------------------------------------------------
-    print("\n--- 確率キャリブレーション（Platt Scaling）のフィッティング ---")
-    from sklearn.linear_model import LogisticRegression
 
     # 検証データ（2024年）をロードしてフィッティングに使用
     val_df = df[(df['race_date'] >= '2024-01-01') & (df['race_date'] <= '2024-12-31')].copy()
@@ -105,29 +104,74 @@ def run_lambdarank_backtest(db_path='C:/sqlite/jra_race.db'):
     is_turf_val = val_track_code.between(10, 22)
     is_dirt_val = val_track_code.between(23, 29)
 
-    # 芝用キャリブレータの学習
     val_turf = val_df[is_turf_val].copy()
     val_turf, cat_cols = prepare_features(val_turf)
     actual_features_turf = [col for col in (cat_cols + numeric_features) if col in val_turf.columns]
     val_turf['predict_score'] = booster_turf.predict(val_turf[actual_features_turf])
-    
-    calibrator_turf = LogisticRegression(C=1e9, random_state=42)
-    calibrator_turf.fit(val_turf['predict_score'].values.reshape(-1, 1), val_turf['is_win'])
-    print(f"芝用キャリブレータ学習完了: 係数={calibrator_turf.coef_[0][0]:.4f}, 切片={calibrator_turf.intercept_[0]:.4f}")
 
-    # ダート用キャリブレータの学習
     val_dirt = val_df[is_dirt_val].copy()
     val_dirt, _ = prepare_features(val_dirt)
     actual_features_dirt = [col for col in (cat_cols + numeric_features) if col in val_dirt.columns]
     val_dirt['predict_score'] = booster_dirt.predict(val_dirt[actual_features_dirt])
-    
-    calibrator_dirt = LogisticRegression(C=1e9, random_state=42)
-    calibrator_dirt.fit(val_dirt['predict_score'].values.reshape(-1, 1), val_dirt['is_win'])
-    print(f"ダート用キャリブレータ学習完了: 係数={calibrator_dirt.coef_[0][0]:.4f}, 切片={calibrator_dirt.intercept_[0]:.4f}")
 
-    # ---------------------------------------------------------
-    # テストデータの予測とロジット算出
-    # ---------------------------------------------------------
+    # 馬場状態によるグループ分けを判定する関数
+    def get_condition_group(row):
+        tc = pd.to_numeric(row['track_code'], errors='coerce')
+        if pd.isna(tc):
+            return 'dry'
+        is_turf = 10 <= tc <= 22
+        cond_code = row['turf_condition_code'] if is_turf else row['dirt_condition_code']
+        cond_str = str(cond_code).strip()
+        return 'dry' if cond_str == '1' else 'wet'
+
+    # キャリブレーションの実行
+    if calibration_method == 'platt':
+        print("\n--- 確率キャリブレーション（Platt Scaling）のフィッティング ---")
+        from sklearn.linear_model import LogisticRegression
+        calibrator_turf = LogisticRegression(C=1e9, random_state=42)
+        calibrator_turf.fit(val_turf['predict_score'].values.reshape(-1, 1), val_turf['is_win'])
+        print(f"芝用キャリブレータ学習完了: 係数={calibrator_turf.coef_[0][0]:.4f}, 切片={calibrator_turf.intercept_[0]:.4f}")
+
+        calibrator_dirt = LogisticRegression(C=1e9, random_state=42)
+        calibrator_dirt.fit(val_dirt['predict_score'].values.reshape(-1, 1), val_dirt['is_win'])
+        print(f"ダート用キャリブレータ学習完了: 係数={calibrator_dirt.coef_[0][0]:.4f}, 切片={calibrator_dirt.intercept_[0]:.4f}")
+
+    elif calibration_method == 'isotonic':
+        print("\n--- 確率キャリブレーション（Isotonic Regression）のフィッティング ---")
+        from sklearn.isotonic import IsotonicRegression
+        calibrator_turf = IsotonicRegression(out_of_bounds='clip')
+        calibrator_turf.fit(val_turf['predict_score'].values, val_turf['is_win'])
+        print("芝用等張回帰キャリブレータ学習完了")
+
+        calibrator_dirt = IsotonicRegression(out_of_bounds='clip')
+        calibrator_dirt.fit(val_dirt['predict_score'].values, val_dirt['is_win'])
+        print("ダート用等張回帰キャリブレータ学習完了")
+
+    elif calibration_method == 'group_platt':
+        print("\n--- 確率キャリブレーション（Group-based Platt Scaling: 馬場状態別）のフィッティング ---")
+        from sklearn.linear_model import LogisticRegression
+        val_turf['cond_group'] = val_turf.apply(get_condition_group, axis=1)
+        val_dirt['cond_group'] = val_dirt.apply(get_condition_group, axis=1)
+
+        calibrators_turf = {}
+        for g in ['dry', 'wet']:
+            sub = val_turf[val_turf['cond_group'] == g]
+            if len(sub) > 0:
+                lr = LogisticRegression(C=1e9, random_state=42)
+                lr.fit(sub['predict_score'].values.reshape(-1, 1), sub['is_win'])
+                calibrators_turf[g] = lr
+                print(f"芝 ({g}) 学習完了: 係数={lr.coef_[0][0]:.4f}, 切片={lr.intercept_[0]:.4f}")
+
+        calibrators_dirt = {}
+        for g in ['dry', 'wet']:
+            sub = val_dirt[val_dirt['cond_group'] == g]
+            if len(sub) > 0:
+                lr = LogisticRegression(C=1e9, random_state=42)
+                lr.fit(sub['predict_score'].values.reshape(-1, 1), sub['is_win'])
+                calibrators_dirt[g] = lr
+                print(f"ダート ({g}) 学習完了: 係数={lr.coef_[0][0]:.4f}, 切片={lr.intercept_[0]:.4f}")
+
+    # テストデータの予測とロジット算出 / 確率算出
     track_code_int = pd.to_numeric(test_df['track_code'], errors='coerce').fillna(0)
     is_turf_mask = track_code_int.between(10, 22)
     is_dirt_mask = track_code_int.between(23, 29)
@@ -135,20 +179,58 @@ def run_lambdarank_backtest(db_path='C:/sqlite/jra_race.db'):
     df_turf = test_df[is_turf_mask].copy()
     df_dirt = test_df[is_dirt_mask].copy()
 
-    # それぞれ推論とキャリブレーションロジット算出
     df_turf, cat_cols = prepare_features(df_turf)
     actual_features_turf = [col for col in (cat_cols + numeric_features) if col in df_turf.columns]
     df_turf['predict_score'] = booster_turf.predict(df_turf[actual_features_turf])
-    df_turf['calibrated_logit'] = calibrator_turf.decision_function(df_turf['predict_score'].values.reshape(-1, 1))
 
     df_dirt, _ = prepare_features(df_dirt)
     actual_features_dirt = [col for col in (cat_cols + numeric_features) if col in df_dirt.columns]
     df_dirt['predict_score'] = booster_dirt.predict(df_dirt[actual_features_dirt])
-    df_dirt['calibrated_logit'] = calibrator_dirt.decision_function(df_dirt['predict_score'].values.reshape(-1, 1))
 
-    # 結果の結合とランク付け
-    result_df = pd.concat([df_turf, df_dirt])
+    if calibration_method == 'platt':
+        df_turf['calibrated_logit'] = calibrator_turf.decision_function(df_turf['predict_score'].values.reshape(-1, 1))
+        df_dirt['calibrated_logit'] = calibrator_dirt.decision_function(df_dirt['predict_score'].values.reshape(-1, 1))
+        result_df = pd.concat([df_turf, df_dirt])
+
+        def softmax_logit(x):
+            e_x = np.exp(x - np.max(x))
+            return e_x / e_x.sum()
+        result_df['estimated_prob'] = result_df.groupby('race_id')['calibrated_logit'].transform(softmax_logit)
+
+    elif calibration_method == 'isotonic':
+        df_turf['calibrated_prob'] = calibrator_turf.predict(df_turf['predict_score'].values)
+        df_dirt['calibrated_prob'] = calibrator_dirt.predict(df_dirt['predict_score'].values)
+        result_df = pd.concat([df_turf, df_dirt])
+
+        prob_sum = result_df.groupby('race_id')['calibrated_prob'].transform('sum')
+        horse_count = result_df.groupby('race_id')['horse_id'].transform('count')
+        result_df['estimated_prob'] = np.where(prob_sum > 1e-6, result_df['calibrated_prob'] / prob_sum, 1.0 / horse_count)
+
+    elif calibration_method == 'group_platt':
+        df_turf['cond_group'] = df_turf.apply(get_condition_group, axis=1)
+        df_dirt['cond_group'] = df_dirt.apply(get_condition_group, axis=1)
+
+        df_turf['calibrated_logit'] = 0.0
+        for g in ['dry', 'wet']:
+            mask = df_turf['cond_group'] == g
+            if mask.any() and g in calibrators_turf:
+                df_turf.loc[mask, 'calibrated_logit'] = calibrators_turf[g].decision_function(df_turf.loc[mask, 'predict_score'].values.reshape(-1, 1))
+
+        df_dirt['calibrated_logit'] = 0.0
+        for g in ['dry', 'wet']:
+            mask = df_dirt['cond_group'] == g
+            if mask.any() and g in calibrators_dirt:
+                df_dirt.loc[mask, 'calibrated_logit'] = calibrators_dirt[g].decision_function(df_dirt.loc[mask, 'predict_score'].values.reshape(-1, 1))
+
+        result_df = pd.concat([df_turf, df_dirt])
+
+        def softmax_logit(x):
+            e_x = np.exp(x - np.max(x))
+            return e_x / e_x.sum()
+        result_df['estimated_prob'] = result_df.groupby('race_id')['calibrated_logit'].transform(softmax_logit)
+
     result_df['score_rank'] = result_df.groupby('race_id')['predict_score'].rank(ascending=False, method='min')
+    result_df['expected_value'] = result_df['estimated_prob'] * result_df['win_odds']
 
     print(f"\n対象期間: {result_df['race_date'].min()} ～ {result_df['race_date'].max()}")
     print(f"対象レース数: {result_df['race_id'].nunique()} レース")
@@ -164,19 +246,6 @@ def run_lambdarank_backtest(db_path='C:/sqlite/jra_race.db'):
     labels_dist = ['1_短距離(~1300m)', '2_マイル(1301~1899m)', '3_中距離(1900~2100m)', '4_長距離(2101m~)']
     result_df['dist_category'] = pd.cut(pd.to_numeric(result_df['distance']), bins=bins_dist, labels=labels_dist)
     result_df['track_type'] = np.where(pd.to_numeric(result_df['track_code']).between(10, 22), '芝', 'ダート')
-
-    # ---------------------------------------------------------
-    # 期待値（EV: Expected Value）の算出と購入対象の絞り込み
-    # ---------------------------------------------------------
-    # 各レースごとに、キャリブレーションされたロジットをSoftmax関数で推定勝率に変換
-    def softmax_logit(x):
-        e_x = np.exp(x - np.max(x))
-        return e_x / e_x.sum()
-
-    result_df['estimated_prob'] = result_df.groupby('race_id')['calibrated_logit'].transform(softmax_logit)
-    
-    # 期待値 ＝ 推定勝率 × 単勝オッズ
-    result_df['expected_value'] = result_df['estimated_prob'] * result_df['win_odds']
 
     def get_ev_threshold(course, track):
         low_recovery_races = {
@@ -367,5 +436,13 @@ def run_lambdarank_backtest(db_path='C:/sqlite/jra_race.db'):
         feat_comparison = track_buy.groupby('analysis_group')[features_to_compare].mean().reindex(['低回収グループ', '高回収グループ'])
         print(feat_comparison.to_string())
 
+    return result_df, buy_df
+
 if __name__ == "__main__":
-    run_lambdarank_backtest()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--calibration', type=str, default='platt', choices=['platt', 'isotonic', 'group_platt'],
+                        help='Calibration method: platt, isotonic, group_platt')
+    args = parser.parse_args()
+    
+    run_lambdarank_backtest(calibration_method=args.calibration)

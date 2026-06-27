@@ -4,7 +4,7 @@ import numpy as np
 from scipy.stats import trim_mean
 
 # データベースの絶対パス
-DB_PATH = r"C:\sqlite\jra_race.db"
+DB_PATH = r"C:\Ugaura\sqlite\jra_race.db"
 
 # JRAの中央10場のコードリスト
 JRA_COURSE_CODES = ('01', '02', '03', '04', '05', '06', '07', '08', '09', '10')

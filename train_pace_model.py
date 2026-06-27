@@ -5,7 +5,7 @@ import lightgbm as lgb
 from sklearn.metrics import mean_squared_error, r2_score
 import data_loader
 
-DB_PATH = "C:/sqlite/jra_race.db"
+DB_PATH = "C:/Ugaura/sqlite/jra_race.db"
 MODEL_FILENAME = "lgbm_pace_model.txt"
 
 def train_pace_model():

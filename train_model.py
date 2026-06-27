@@ -6,13 +6,14 @@ import numpy as np
 import data_loader
 import data_splitter
 
-DB_PATH = "C:/sqlite/jra_race.db"
+DB_PATH = "C:/Ugaura/sqlite/jra_race.db"
 
 def prepare_features(df):
     """カテゴリカル変数の安全な型変換を行う共通関数"""
     categorical_features = [
         'course_code', 'track_code', 'turf_condition_code', 'dirt_condition_code',
-        'bracket_number', 'horse_number', 'sex_code', 'distance', 'prev_running_style'
+        'bracket_number', 'horse_number', 'sex_code', 'distance', 'prev_running_style',
+        'affiliation_code'
     ]
     for col in categorical_features:
         if df[col].dtype.name == 'category':
@@ -73,7 +74,12 @@ def train_lambdarank_model(df_subset, model_filename, category_name):
         'interaction_escape_conflict_lead', 'interaction_escape_conflict_back',
         'interaction_kokura_dirt_true_escape', 'interaction_kokura_dirt_escape_conflict',
         'interaction_kokura_dirt_escape_conflict_back',
-        'interaction_nakayama_turf_lead', 'interaction_nakayama_turf_back'
+        'interaction_nakayama_turf_lead', 'interaction_nakayama_turf_back',
+        'distance_change', 'is_promoted',
+        'interaction_straight_length_lead', 'interaction_straight_length_back',
+        'interaction_chukyo_dirt_lead', 'interaction_chukyo_dirt_back',
+        'interaction_kokura_dirt_lead', 'interaction_kokura_dirt_back',
+        'interaction_fukushima_dirt_1150_lead', 'interaction_fukushima_dirt_1150_back'
     ]
     
     df_subset, categorical_features = prepare_features(df_subset)

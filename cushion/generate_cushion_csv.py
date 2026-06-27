@@ -10,7 +10,7 @@ COURSE_NAME_MAP = {
 }
 
 def generate_cushion_csv():
-    db_path = 'C:/sqlite/jra_race.db'
+    db_path = 'C:/Ugaura/sqlite/jra_race.db'
     
     # システム日付からデフォルト値(YYYYMMDD)を生成
     today_str = date.today().strftime('%Y%m%d')

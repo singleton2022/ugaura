@@ -12,7 +12,7 @@ from data_loader import load_feature_matrix
 st.set_page_config(page_title="JRA AI 予測XAIダッシュボード", layout="wide")
 
 @st.cache_data(ttl=3600) # メモリ効率のためデータを1時間キャッシュ
-def load_and_prep_data(db_path='C:/sqlite/jra_race.db'):
+def load_and_prep_data(db_path='C:/Ugaura/sqlite/jra_race.db'):
     df = load_feature_matrix(db_path)
     # 直近のレースのみ抽出（動作を軽くするため2025年以降に限定）
     df = df[df['race_date'] >= '2026-01-01'].copy()
