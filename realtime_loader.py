@@ -119,69 +119,48 @@ def process_record(byte_line, cursor):
 
 def download_and_update_realtime(db_path, date_str):
     """
-    JV-Link COMコントロールを使って指定日の速報データを取得し、SQLite DBを更新する
-    オッズ取得を含め、JV-Linkからのロードで失敗した場合は処理を即時中断してエラーとする
+    C++のネイティブインポートアプリを呼び出して、指定日の速報データをSQLite DBにインポートする
     """
-    print(f"[JV-Link] 接続処理を開始します (日付: {date_str})")
+    import subprocess
+    import os
+    print(f"[Python] C++ リアルタイムインポートを起動します (日付: {date_str})")
     
-    try:
-        jv_link = win32com.client.Dispatch("JVDTLab.JVLink.1")
-    except Exception as e:
-        print(f"[エラー] JVDTLab.JVLink.1 COMオブジェクトの生成に失敗しました: {e}")
-        print("JV-Linkが正しくインストールされているか確認してください。")
+    # 実行ファイルのパス
+    exe_path = r"C:\Ugaura\Cpp\JravanImpor2025\Debug\sample1.exe"
+    if not os.path.exists(exe_path):
+        # リリースビルドの可能性も考慮
+        exe_path = r"C:\Ugaura\Cpp\JravanImpor2025\Release\sample1.exe"
+    
+    if not os.path.exists(exe_path):
+        print(f"[エラー] C++実行ファイルが見つかりません: {exe_path}")
         return False
         
-    rc = jv_link.JVInit("UNKNOWN")
-    if rc != 0:
-        print(f"[エラー] JVInitに失敗しました (エラーコード: {rc})")
-        return False
-        
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    
-    # 取得対象のdataspecリスト（変更情報、馬体重、単複枠オッズ）
-    # ※本実装では計画に基づき、JV-Link公式からのみ全速報データを取得します。
-    specs = [
-        ("0B12", "当日変更情報(除外・騎手等)"),
-        ("0B11", "当日の馬体重情報"),
-        ("0B31", "当日の単複枠オッズ情報")
-    ]
-    
     try:
-        cursor.execute("BEGIN TRANSACTION;")
+        # C++アプリを subprocess でキック
+        print(f"[Python] 実行コマンド: {exe_path} /realtime {date_str}")
+        result = subprocess.run(
+            [exe_path, "/realtime", date_str],
+            capture_output=True,
+            text=True,
+            encoding='cp932',
+            check=False
+        )
         
-        for dataspec, desc in specs:
-            rc = jv_link.JVRTOpen(dataspec, date_str)
-            if rc == 0:
-                print(f"[JV-Link] {dataspec} ({desc}) 読み込み開始...")
-                filename = ""
-                count = 0
-                while True:
-                    read_buff = " " * 100000
-                    read_size = 100000
-                    ret, buff, size, filename = jv_link.JVRead(read_buff, read_size, filename)
-                    if ret == 0:
-                        break
-                    if ret < 0:
-                        print(f"[エラー] JVRead {dataspec} 読み込み中にエラーが発生しました (エラーコード: {ret})")
-                        raise RuntimeError(f"JVRead error: {ret}")
-                    
-                    byte_line = buff[:ret].encode('cp932', errors='replace')
-                    process_record(byte_line, cursor)
-                    count += 1
-                print(f"[JV-Link] {dataspec} 処理完了 ({count} レコード)")
-                jv_link.JVClose()
-            else:
-                print(f"[エラー] JVRTOpen {dataspec} ({desc}) のオープンに失敗しました (エラーコード: {rc})")
-                print("JRA-VANから必要なデータが取得できないため、リアルタイム更新処理を即時中断します。")
-                raise RuntimeError(f"JVRTOpen error: {rc}")
+        # C++アプリからの標準出力/標準エラー出力を表示
+        if result.stdout:
+            print("[C++ stdout]")
+            print(result.stdout)
+        if result.stderr:
+            print("[C++ stderr]")
+            print(result.stderr)
             
-        conn.commit()
-        print("[JV-Link] すべてのリアルタイムデータ更新が正常に完了しました。")
-        return True
+        if result.returncode == 0:
+            print("[Python] C++ インポート処理が正常に完了しました。")
+            return True
+        else:
+            print(f"[エラー] C++ インポート処理がエラー終了しました (終了コード: {result.returncode})")
+            return False
+            
     except Exception as e:
-        conn.rollback()
-        print(f"[エラー] リアルタイムデータ更新処理をロールバックして中止しました: {e}")
+        print(f"[エラー] C++ プロセスの起動中に例外が発生しました: {e}")
         return False
-    finally:
-        conn.close()

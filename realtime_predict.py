@@ -1,4 +1,5 @@
 import argparse
+import sys
 import sqlite3
 import pandas as pd
 import numpy as np
@@ -285,7 +286,8 @@ def main():
     # 1. JV-Linkから最新速報データをロード
     print("--- 1. JRA-VAN JV-Link からのデータインポート処理 ---")
     if not download_and_update_realtime(DB_PATH, date_str):
-        print("[警告] JRA-VANからのインポートに失敗しましたが、既存のデータベースのデータを用いて予測を試みます。")
+        print("[エラー] JRA-VANからのリアルタイムインポートに失敗しました。処理を即時停止します。")
+        sys.exit(1)
 
     # 2. 特徴量のロード
     print("--- 2. 特徴量のロード中 (※少し時間がかかります) ---")
