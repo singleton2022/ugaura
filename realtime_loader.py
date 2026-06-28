@@ -164,3 +164,24 @@ def download_and_update_realtime(db_path, date_str):
     except Exception as e:
         print(f"[エラー] C++ プロセスの起動中に例外が発生しました: {e}")
         return False
+
+def main():
+    import argparse
+    import sys
+    
+    parser = argparse.ArgumentParser(description="JRA-VAN JV-Link リアルタイムインポータ")
+    parser.add_argument('--date', type=str, required=True, help="インポート対象日付 (例: 20260628)")
+    args = parser.parse_args()
+    
+    db_path = "C:/Ugaura/sqlite/jra_race.db"
+    
+    success = download_and_update_realtime(db_path, args.date)
+    if success:
+        print("[Python] リアルタイムインポートが正常に完了しました。")
+        sys.exit(0)
+    else:
+        print("[Python] リアルタイムインポートに失敗しました。")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()

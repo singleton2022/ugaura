@@ -248,9 +248,29 @@ def main():
     parser.add_argument('--date', type=str, default=None, help="予測対象日付 (例: 20260426)")
     parser.add_argument('--race_id', type=str, default=None, help="netkeibaの12桁レースID (例: 202605020411)")
     parser.add_argument('--race_number', type=str, default=None, help="特定レース番号のみ予測する場合 (例: 11)")
+    parser.add_argument('--import', action='store_true', dest='import_data', help="予測の前にリアルタイムインポートを実行する")
+    parser.add_argument('--course', type=str, default=None, help="予測対象競馬場 (例: 05 または 東京)")
     args = parser.parse_args()
     
     date_str = args.date
+    
+    # 競馬場指定の解析
+    target_course_code = None
+    if args.course:
+        course_map = {'01':'札幌', '02':'函館', '03':'福島', '04':'新潟', '05':'東京', '06':'中山', '07':'中京', '08':'京都', '09':'阪神', '10':'小倉'}
+        course_name_to_code = {v: k for k, v in course_map.items()}
+        if args.course.isdigit():
+            target_course_code = args.course.zfill(2)
+        else:
+            target_course_code = course_name_to_code.get(args.course)
+            if not target_course_code:
+                for name, code in course_name_to_code.items():
+                    if name in args.course:
+                        target_course_code = code
+                        break
+        if not target_course_code:
+            print(f"[エラー] 指定された競馬場が見つかりません: {args.course}")
+            return
     target_race_num = args.race_number
     
     # race_idから日付を抽出 (指定が無い場合)
@@ -284,10 +304,13 @@ def main():
         return
         
     # 1. JV-Linkから最新速報データをロード
-    print("--- 1. JRA-VAN JV-Link からのデータインポート処理 ---")
-    if not download_and_update_realtime(DB_PATH, date_str):
-        print("[エラー] JRA-VANからのリアルタイムインポートに失敗しました。処理を即時停止します。")
-        sys.exit(1)
+    if args.import_data:
+        print("--- 1. JRA-VAN JV-Link からのデータインポート処理 ---")
+        if not download_and_update_realtime(DB_PATH, date_str):
+            print("[エラー] JRA-VANからのリアルタイムインポートに失敗しました。処理を即時停止します。")
+            sys.exit(1)
+    else:
+        print("--- 1. データインポートをスキップし、既存のデータベースデータを使用します ---")
 
     # 2. 特徴量のロード
     print("--- 2. 特徴量のロード中 (※少し時間がかかります) ---")
@@ -316,20 +339,23 @@ def main():
     race_ids.sort()
     
     for db_race_id in race_ids:
-        # レースIDからレース番号（末尾2桁）を取得
-        race_num_str = db_race_id[-2:]
-        if target_race_num and race_num_str != target_race_num.zfill(2):
-            continue
-            
-        race_df = day_df[day_df['race_id'] == db_race_id].copy()
-        
-        # キー項目抽出
+        # キー情報抽出
         year = db_race_id[0:4]
         month_day = db_race_id[4:8]
         course_code = db_race_id[8:10]
         times = db_race_id[10:12]
         day = db_race_id[12:14]
         race_number = db_race_id[14:16]
+        
+        # 競馬場での絞り込み
+        if target_course_code and course_code != target_course_code:
+            continue
+            
+        # レース番号での絞り込み
+        if target_race_num and race_number != target_race_num.zfill(2):
+            continue
+            
+        race_df = day_df[day_df['race_id'] == db_race_id].copy()
         
         try:
             predict_single_race(
