@@ -10,7 +10,6 @@ DB_PATH = r"C:\Ugaura\sqlite\jra_race.db"
 JRA_COURSE_CODES = ('01', '02', '03', '04', '05', '06', '07', '08', '09', '10')
 
 def parse_running_time(t_str):
-    """JRA-VANのタイム文字列(例: '1234')を秒数(83.4)に変換"""
     if pd.isna(t_str) or not str(t_str).strip().isdigit():
         return None
     t = str(t_str).strip().zfill(4)
@@ -20,16 +19,14 @@ def parse_running_time(t_str):
     return m * 60 + s + ms * 0.1
 
 def parse_3f_time(t_str):
-    """JRA-VANの上がり3F文字列(例: '345')を秒数(34.5)に変換"""
     if pd.isna(t_str) or not str(t_str).strip().isdigit():
-        return 0.0 # 欠損・異常値は0.0にして後で除外する
+        return 0.0
     t = str(t_str).strip().zfill(3)
     s = int(t[0:2])
     ms = int(t[2])
     return s + ms * 0.1
 
 def get_track_category(code):
-    """良馬場判定のためだけに大分類(芝/ダート/障害)を返す"""
     c = str(code).strip()
     if c in [str(i) for i in range(10, 23)]: return '芝'
     if c in [str(i) for i in range(23, 30)]: return 'ダート'
@@ -37,7 +34,6 @@ def get_track_category(code):
     return 'その他'
 
 def generate_base_time_master(df_horse_race: pd.DataFrame) -> pd.DataFrame:
-    # 降級制度廃止後(2019-06-01以降) かつ 良馬場 かつ タイムが存在するデータ
     df_target = df_horse_race[
         (df_horse_race['race_date'] >= '2019-06-01') & 
         (df_horse_race['is_good_condition'] == True)
@@ -50,10 +46,8 @@ def generate_base_time_master(df_horse_race: pd.DataFrame) -> pd.DataFrame:
         if count == 0:
             return pd.Series({'base_time_seconds': np.nan, 'std_dev': np.nan, 'sample_count': 0})
         elif count < 5:
-            # サンプル不足時は単純平均
             return pd.Series({'base_time_seconds': np.mean(times), 'std_dev': np.std(times, ddof=1) if count > 1 else 0.0, 'sample_count': count})
         else:
-            # トリム平均（上下10%の外れ値を除外）
             t_mean = trim_mean(times, 0.1)
             lower_bound, upper_bound = np.percentile(times, 10), np.percentile(times, 90)
             trimmed_times = times[(times >= lower_bound) & (times <= upper_bound)]
@@ -64,10 +58,8 @@ def generate_base_time_master(df_horse_race: pd.DataFrame) -> pd.DataFrame:
     return df_base_time.dropna(subset=['base_time_seconds'])
 
 def calculate_ucv_3f_base_time(df_horse_race: pd.DataFrame) -> pd.DataFrame:
-    """上がり3ハロンの基準タイムと標準偏差を算出する"""
     df_valid = df_horse_race[df_horse_race['last_3f_time_seconds'] > 0].copy()
 
-    # 3F基準タイムは、直線の長さが異なるため内外回りを区別する (track_codeを使用)
     group_keys = [
         'course_code',
         'track_code', 
@@ -82,7 +74,6 @@ def calculate_ucv_3f_base_time(df_horse_race: pd.DataFrame) -> pd.DataFrame:
         sample_count='count'
     ).reset_index()
 
-    # 統計的補正処理 (0除算やNaN回避)
     default_std = 0.6
     df_base_3f['base_3f_std'] = df_base_3f['base_3f_std'].fillna(default_std)
     df_base_3f.loc[df_base_3f['base_3f_std'] < 0.1, 'base_3f_std'] = default_std
@@ -90,7 +81,6 @@ def calculate_ucv_3f_base_time(df_horse_race: pd.DataFrame) -> pd.DataFrame:
     return df_base_3f
 
 def calculate_track_bias(df_horse_race: pd.DataFrame, df_base_time: pd.DataFrame) -> pd.DataFrame:
-    # レースごとの中央値タイムを算出
     df_race_median = df_horse_race.groupby('race_id')['time_seconds'].median().reset_index(name='race_median_time')
     
     race_meta_cols = ['race_id', 'race_date', 'course_code', 'track_code', 'track_category_for_cond', 'distance', 'race_type_code', 'cond_code_youngest', 'race_number']
@@ -98,28 +88,30 @@ def calculate_track_bias(df_horse_race: pd.DataFrame, df_base_time: pd.DataFrame
     
     df_race = pd.merge(df_race_info, df_race_median, on='race_id')
     
-    # 基準タイムと結合して偏差を算出
     group_keys = ['course_code', 'track_code', 'distance', 'race_type_code', 'cond_code_youngest']
     df_race = pd.merge(df_race, df_base_time[group_keys + ['base_time_seconds']], on=group_keys, how='left')
     df_race['deviation'] = df_race['race_median_time'] - df_race['base_time_seconds']
     
     df_race = df_race.dropna(subset=['deviation']).sort_values(['race_date', 'course_code', 'track_category_for_cond', 'race_number'])
     
-    def compute_smoothed_bias(group):
-        # 移動中央値と縮小推定の適用
-        group['rolling_deviation'] = group['deviation'].rolling(window=3, min_periods=1, center=True).median()
+    def compute_trimmed_bias(group):
+        devs = group['deviation'].values
+        if len(devs) == 0:
+            tm = 0.0
+        elif len(devs) <= 2:
+            tm = np.median(devs)
+        else:
+            tm = trim_mean(devs, 0.20)
+        
         N = len(group)
         alpha = 3.0
-        group['track_bias_seconds'] = (N * group['rolling_deviation'] + alpha * 0) / (N + alpha)
+        group['track_bias_seconds'] = (N * tm + alpha * 0.0) / (N + alpha)
         return group
 
-    # グループ化のキーを track_category_for_cond に変更（内・外回りを同一視してN数を稼ぐ）
-    df_bias = df_race.groupby(['race_date', 'course_code', 'track_category_for_cond']).apply(compute_smoothed_bias, include_groups=False).reset_index()
-    
+    df_bias = df_race.groupby(['race_date', 'course_code', 'track_category_for_cond']).apply(compute_trimmed_bias, include_groups=False).reset_index()
     return df_bias[['race_id', 'race_date', 'course_code', 'track_code', 'track_bias_seconds']]
 
 def calculate_track_bias_3f(df_horse_race: pd.DataFrame, df_base_time_3f: pd.DataFrame) -> pd.DataFrame:
-    """上がり3ハロン専用の馬場差を算出する"""
     df_valid = df_horse_race[df_horse_race['last_3f_time_seconds'] > 0].copy()
     df_race_median = df_valid.groupby('race_id')['last_3f_time_seconds'].median().reset_index(name='race_median_3f')
     
@@ -133,14 +125,20 @@ def calculate_track_bias_3f(df_horse_race: pd.DataFrame, df_base_time_3f: pd.Dat
     df_race['deviation_3f'] = df_race['race_median_3f'] - df_race['base_3f_time_seconds']
     df_race = df_race.dropna(subset=['deviation_3f']).sort_values(['race_date', 'course_code', 'track_category_for_cond', 'race_number'])
     
-    def compute_smoothed_bias(group):
-        group['rolling_dev_3f'] = group['deviation_3f'].rolling(window=3, min_periods=1, center=True).median()
+    def compute_trimmed_bias_3f(group):
+        devs = group['deviation_3f'].values
+        if len(devs) == 0:
+            tm = 0.0
+        elif len(devs) <= 2:
+            tm = np.median(devs)
+        else:
+            tm = trim_mean(devs, 0.20)
         N = len(group)
         alpha = 3.0
-        group['track_bias_3f_seconds'] = (N * group['rolling_dev_3f'] + alpha * 0) / (N + alpha)
+        group['track_bias_3f_seconds'] = (N * tm + alpha * 0.0) / (N + alpha)
         return group
 
-    df_bias_3f = df_race.groupby(['race_date', 'course_code', 'track_category_for_cond']).apply(compute_smoothed_bias, include_groups=False).reset_index()
+    df_bias_3f = df_race.groupby(['race_date', 'course_code', 'track_category_for_cond']).apply(compute_trimmed_bias_3f, include_groups=False).reset_index()
     return df_bias_3f[['race_id', 'race_date', 'course_code', 'track_code', 'track_bias_3f_seconds']]
 
 def calculate_ucv(df_horse_race: pd.DataFrame, df_base_time: pd.DataFrame, df_track_bias: pd.DataFrame) -> pd.DataFrame:
@@ -159,7 +157,6 @@ def calculate_ucv(df_horse_race: pd.DataFrame, df_base_time: pd.DataFrame, df_tr
     return df_ucv[['race_id', 'horse_number', 'time_seconds', 'track_bias_seconds', 'base_time_seconds', 'corrected_time', 'ucv_score']]
 
 def calculate_ucv_3f(df_horse_race: pd.DataFrame, df_base_time_3f: pd.DataFrame, df_track_bias_3f: pd.DataFrame) -> pd.DataFrame:
-    """上がり3FのUCVスコア(Zスコア)を算出する"""
     group_keys = ['course_code', 'track_code', 'distance', 'race_type_code', 'cond_code_youngest']
     df_ucv_3f = pd.merge(df_horse_race, df_base_time_3f, on=group_keys, how='left')
     df_ucv_3f = pd.merge(df_ucv_3f, df_track_bias_3f[['race_id', 'track_bias_3f_seconds']], on='race_id', how='left')
@@ -179,7 +176,6 @@ def calculate_ucv_3f(df_horse_race: pd.DataFrame, df_base_time_3f: pd.DataFrame,
 
 def save_to_database(conn: sqlite3.Connection, df_base_time: pd.DataFrame, df_track_bias: pd.DataFrame, df_ucv: pd.DataFrame, 
                      df_base_time_3f: pd.DataFrame, df_track_bias_3f: pd.DataFrame, df_ucv_3f: pd.DataFrame):
-    """計算結果をデータベースに保存する（上がり3Fデータ対応版）"""
     cursor = conn.cursor()
     print("   -> 既存の計算データをクリアしています...")
     cursor.execute("DELETE FROM ucv_base_time")
@@ -202,7 +198,6 @@ def save_to_database(conn: sqlite3.Connection, df_base_time: pd.DataFrame, df_tr
     df_base_time_3f.to_sql('ucv_3f_base_time', conn, if_exists='append', index=False, method='multi', chunksize=500)
     df_track_bias_3f.to_sql('ucv_3f_track_bias', conn, if_exists='append', index=False, method='multi', chunksize=500)
     
-    # --- 通常UCV ---
     df_ucv = df_ucv.drop_duplicates(subset=['race_id', 'horse_number'], keep='last').replace({np.nan: None})
     data_tuples_ucv = list(df_ucv.itertuples(index=False, name=None))
     sql_ucv = """
@@ -212,7 +207,6 @@ def save_to_database(conn: sqlite3.Connection, df_base_time: pd.DataFrame, df_tr
     """
     cursor.executemany(sql_ucv, data_tuples_ucv)
 
-    # --- 上がり3F UCV ---
     df_ucv_3f = df_ucv_3f.drop_duplicates(subset=['race_id', 'horse_number'], keep='last').replace({np.nan: None})
     data_tuples_ucv_3f = list(df_ucv_3f.itertuples(index=False, name=None))
     sql_ucv_3f = """
@@ -248,45 +242,48 @@ def main():
             year || month_day || course_code || times || day || race_number AS race_id,
             horse_number, 
             running_time,
-            lap_time_back_3f 
+            lap_time_back_3f,
+            abnormality_code
         FROM horse_race_info
-        WHERE course_code IN {JRA_COURSE_CODES}
+        WHERE abnormality_code IN ('0', '7')
     """
     
-    df_race_info = pd.read_sql_query(query_race, conn)
-    df_horse_info = pd.read_sql_query(query_horse, conn)
+    df_race = pd.read_sql(query_race, conn)
+    df_horse = pd.read_sql(query_horse, conn)
     
-    df_horse_race = pd.merge(df_horse_info, df_race_info, on='race_id')
+    print("2. データの整形・時間パースを行っています...")
+    df_horse['time_seconds'] = df_horse['running_time'].apply(parse_running_time)
+    df_horse['last_3f_time_seconds'] = df_horse['lap_time_back_3f'].apply(parse_3f_time)
     
-    print("2. データのクレンジングとフォーマット変換を実行中...")
-    df_horse_race['time_seconds'] = df_horse_race['running_time'].apply(parse_running_time)
-    df_horse_race['last_3f_time_seconds'] = df_horse_race['lap_time_back_3f'].apply(parse_3f_time)
+    df_horse_race = pd.merge(df_horse, df_race, on='race_id', how='inner')
+    df_horse_race = df_horse_race.dropna(subset=['time_seconds'])
     
-    df_horse_race = df_horse_race[df_horse_race['time_seconds'] >= 50.0]
     df_horse_race['track_category_for_cond'] = df_horse_race['track_code'].apply(get_track_category)
-    df_horse_race = df_horse_race[df_horse_race['track_category_for_cond'] != '障害']
     
-    df_horse_race['is_good_condition'] = False
-    df_horse_race.loc[df_horse_race['track_category_for_cond'] == '芝', 'is_good_condition'] = (df_horse_race['turf_condition_code'] == '1')
-    df_horse_race.loc[df_horse_race['track_category_for_cond'] == 'ダート', 'is_good_condition'] = (df_horse_race['dirt_condition_code'] == '1')
-
-    print("3. 基準タイムマスタ(走破タイム・上がり3F)を算出中...")
+    def is_good(row):
+        cat = row['track_category_for_cond']
+        if cat == '芝': return str(row['turf_condition_code']).strip() == '1'
+        if cat == 'ダート': return str(row['dirt_condition_code']).strip() == '1'
+        return False
+        
+    df_horse_race['is_good_condition'] = df_horse_race.apply(is_good, axis=1)
+    
+    print("3. 全コース・条件の基準タイムマスタ(走破タイム & 上がり3F)を算出中...")
     df_base_time = generate_base_time_master(df_horse_race)
     df_base_time_3f = calculate_ucv_3f_base_time(df_horse_race)
     
-    print("4. 当日の馬場差・上がり馬場差を算出中...")
+    print("4. トリム平均(0.20)による馬場差(Track Bias)を全自動算出中...")
     df_track_bias = calculate_track_bias(df_horse_race, df_base_time)
     df_track_bias_3f = calculate_track_bias_3f(df_horse_race, df_base_time_3f)
     
-    print("5. 全出走馬のUCVおよびUCV_3Fを算出中...")
+    print("5. 全競走馬のUCVスコアおよび上がり3F UCVスコアを計算中...")
     df_ucv = calculate_ucv(df_horse_race, df_base_time, df_track_bias)
     df_ucv_3f = calculate_ucv_3f(df_horse_race, df_base_time_3f, df_track_bias_3f)
     
-    print("6. データベースへ計算結果を保存中...")
+    print("6. データベースへ保存中...")
     save_to_database(conn, df_base_time, df_track_bias, df_ucv, df_base_time_3f, df_track_bias_3f, df_ucv_3f)
-    
     conn.close()
-    print("全ての処理が完了しました。")
+    print("全処理が正常に完了しました！")
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
