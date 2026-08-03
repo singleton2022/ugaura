@@ -47,6 +47,8 @@ def load_past_races_for_horses(horse_id_list, current_race_date, db_path='C:/Uga
         WHERE hri.blood_reg_number IN ({placeholders})
           AND (rd.year || '-' || substr(rd.month_day, 1, 2) || '-' || substr(rd.month_day, 3, 2)) < ?
           AND hri.abnormality_code IN ('0', '7')
+          AND hri.horse_number != '00'
+          AND hri.running_time != '0000'
     )
     SELECT * FROM horse_history WHERE rn <= 5 ORDER BY horse_id, rn;
     """

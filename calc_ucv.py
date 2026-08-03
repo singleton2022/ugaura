@@ -13,6 +13,8 @@ def parse_running_time(t_str):
     if pd.isna(t_str) or not str(t_str).strip().isdigit():
         return None
     t = str(t_str).strip().zfill(4)
+    if t == '0000':
+        return None
     m = int(t[0])
     s = int(t[1:3])
     ms = int(t[3])
@@ -246,6 +248,8 @@ def main():
             abnormality_code
         FROM horse_race_info
         WHERE abnormality_code IN ('0', '7')
+          AND horse_number != '00'
+          AND running_time != '0000'
     """
     
     df_race = pd.read_sql(query_race, conn)
@@ -257,6 +261,7 @@ def main():
     
     df_horse_race = pd.merge(df_horse, df_race, on='race_id', how='inner')
     df_horse_race = df_horse_race.dropna(subset=['time_seconds'])
+    df_horse_race = df_horse_race[df_horse_race['time_seconds'] >= 50.0]
     
     df_horse_race['track_category_for_cond'] = df_horse_race['track_code'].apply(get_track_category)
     

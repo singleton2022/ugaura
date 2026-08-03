@@ -12,7 +12,7 @@ except AttributeError:
     pass
 
 TEST_START_DATE = '2025-01-05'
-TEST_END_DATE = '2026-04-26'
+TEST_END_DATE = '2026-07-26'
 
 # フィルタリング設定（Trueでダート中長距離に限定、Falseで全レース投資）
 APPLY_FILTER = False

@@ -1,0 +1,61 @@
+========== Åyé≈(Turf)Åz ÉÇÉfÉãÇÃäwèKÇäJén ==========
+Total: 192587 records
+--- Train: 147812 (2016-01-17 to 2023-12-28)
+--- Valid: 18317 (2024-01-06 to 2024-12-28)
+--- Test:  26458 (2025-01-05 to 2026-05-17)
+Training until validation scores don't improve for 100 rounds
+Early stopping, best iteration is:
+[160]   train's ndcg@1: 0.379443        train's ndcg@3: 0.543783        train's ndcg@5: 0.606003        valid's ndcg@1: 0.330117        valid's ndcg@3: 0.504697        valid's ndcg@5: 0.572324
+äÆóπ: lgbm_model_turf.txt ÇèoóÕÇµÇ‹ÇµÇΩÅB
+
+--- Feature Importance (Top 15) ---
+               feature   importance
+  jockey_top3_rate_100 22892.643122
+           ucv_score_z  9986.761849
+          avg_ucv_3f_5  8418.088540
+     dash_score_median  7666.767565
+   jockey_win_rate_100  5691.431939
+           ucv_3f_rank  4719.015801
+             horse_age  4701.047361
+       max_ucv_score_5  4484.907533
+slope_lap_time_1f_0m_1  4436.220906
+          horse_number  4150.201087
+        prev_ucv_score  4057.060730
+   prev_ucv_score_rank  3564.616814
+  carried_weight_ratio  3499.054200
+          max_ucv_3f_5  2999.615520
+     target_elo_rating  1995.568000
+-----------------------------------
+
+ï]âø: Åyé≈(Turf)Åz Test ROC-AUC = 0.7532
+
+========== ÅyÉ_Å[Ég(Dirt)Åz ÉÇÉfÉãÇÃäwèKÇäJén ==========
+Total: 203268 records
+--- Train: 155798 (2016-01-16 to 2023-12-28)
+--- Valid: 19305 (2024-01-06 to 2024-12-28)
+--- Test:  28165 (2025-01-05 to 2026-05-17)
+Training until validation scores don't improve for 100 rounds
+Early stopping, best iteration is:
+[296]   train's ndcg@1: 0.46806 train's ndcg@3: 0.616445        train's ndcg@5: 0.667783        valid's ndcg@1: 0.354921        valid's ndcg@3: 0.530769        valid's ndcg@5: 0.594814
+äÆóπ: lgbm_model_dirt.txt ÇèoóÕÇµÇ‹ÇµÇΩÅB
+
+--- Feature Importance (Top 15) ---
+               feature   importance
+        prev_ucv_score 16715.776864
+           ucv_score_z 16297.517554
+  jockey_top3_rate_100 12288.348103
+       max_ucv_score_5 11574.875633
+  max_ucv_score_5_rank  9108.589009
+   prev_ucv_score_rank  6295.905059
+          horse_number  6049.974434
+       avg_ucv_score_5  5070.648239
+   jockey_win_rate_100  4360.774801
+     dash_score_median  4309.663869
+          max_ucv_3f_5  3837.535471
+         interval_days  3831.168164
+slope_lap_time_1f_0m_1  2955.958663
+             horse_age  2946.135052
+  carried_weight_ratio  2371.454983
+-----------------------------------
+
+ï]âø: ÅyÉ_Å[Ég(Dirt)Åz Test ROC-AUC = 0.7906
