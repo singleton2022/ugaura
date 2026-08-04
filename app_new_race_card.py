@@ -165,7 +165,7 @@ def main():
     st.markdown("""
     <div style="margin-bottom: 15px; padding: 12px 18px; background-color: #f8f9fa; border-radius: 8px; border: 1px solid #e9ecef;">
         <div style="font-weight: bold; font-size: 0.95em; color: #343a40; margin-bottom: 6px;">
-            💡 過去5走（前走〜５走前）セルの表記: <span style="color: #0d6efd; font-weight: bold;">[自馬の着順](他出走馬の次走3着以内頭数)</span> （例: 1着(3) = 自馬1着、他同走馬のうち3頭が次走3着以内）
+            💡 過去5走（前走〜５走前）セルの表記: <span style="color: #0d6efd; font-weight: bold;">[自馬の着順](前走1着馬の次走着順-他同走馬の次走1着数-2,3着数)</span> （例: 1着(2-1-2) = 自馬1着、前走1着馬の次走2着、他1頭が次走1着、2頭が次走2,3着。※次走4着以下・データ無は *）
         </div>
         <div style="display: flex; gap: 15px; align-items: center;">
             <span style="font-weight: bold; font-size: 0.9em; color: #495057;">クラス判定背景色:</span>
@@ -180,7 +180,7 @@ def main():
     horse_id_list = target_race_df['horse_id'].unique().tolist()
     past_df = load_past_races_for_horses(horse_id_list, selected_date)
 
-    # 馬ごとに過去5走の「自馬着順 ＋ 他馬の次走3着以内頭数」とクラス比較情報をマッピング
+    # 馬ごとに過去5走の「自馬着順 ＋ 他馬の次走1着数-2,3着数」とクラス比較情報をマッピング
     past_5_map = {}
     if not past_df.empty:
         for h_id, group in past_df.groupby('horse_id'):
@@ -195,12 +195,15 @@ def main():
                     else:
                         self_order_str = ""
                         
-                    other_cnt = row.get('other_next_top3_count', 0)
+                    winner_next = row.get('winner_next_order_code', '*')
+                    other_1st = row.get('other_next_1st_count', 0)
+                    other_23rd = row.get('other_next_23rd_count', 0)
+                    other_top3 = row.get('other_next_top3_count', 0)
                     
                     if self_order_str:
-                        cell_text = f"{self_order_str}({other_cnt})"
+                        cell_text = f"{self_order_str}({winner_next}-{other_1st}-{other_23rd})"
                     else:
-                        cell_text = f"({other_cnt})"
+                        cell_text = f"({winner_next}-{other_1st}-{other_23rd})"
                     
                     p_cond = row.get('cond_code_youngest', None)
                     p_grade = row.get('grade_code', None)
@@ -218,7 +221,10 @@ def main():
                         'text': cell_text,
                         'comp': comp,
                         'class_name': p_cname,
-                        'other_top3_count': other_cnt,
+                        'winner_next_order_code': winner_next,
+                        'other_1st_count': other_1st,
+                        'other_23rd_count': other_23rd,
+                        'other_top3_count': other_top3,
                         'other_next_ran': row.get('other_next_ran', 0)
                     }
 
@@ -322,7 +328,7 @@ def main():
     # 過去走詳細展開
     if not past_df.empty:
         st.markdown("---")
-        st.subheader("📋 過去5走 成績および他同走馬の次走3着以内頭数詳細")
+        st.subheader("📋 過去5走 成績および他同走馬の次走成績詳細")
         
         selected_horse_num = st.selectbox(
             "詳細を確認したい馬番を選択してください",
@@ -352,9 +358,11 @@ def main():
                         else:
                             order_disp = ""
                             
-                        other_cnt = row.get('other_next_top3_count', 0)
+                        winner_next = row.get('winner_next_order_code', '*')
+                        other_1st = row.get('other_next_1st_count', 0)
+                        other_23rd = row.get('other_next_23rd_count', 0)
                         other_ran = row.get('other_next_ran', 0)
-                        next_top3_disp = f"{other_cnt}頭 ({other_ran}頭中)"
+                        next_top3_disp = f"1着馬次走:{winner_next} / 他同走 1着:{other_1st}頭, 2,3着:{other_23rd}頭 ({other_ran}頭中)"
                         
                         detail_rows.append({
                             '走次': f"{row['rn']}走前",
@@ -364,7 +372,7 @@ def main():
                             '距離': f"{row.get('distance', '')}m",
                             'クラス': p_cname,
                             '自馬着順': order_disp,
-                            '他同走馬の次走3着以内数': next_top3_disp,
+                            '他同走馬の次走成績': next_top3_disp,
                             'タイム': row.get('time_fmt', ''),
                             '上がり3F': row.get('last_3f_fmt', ''),
                             '騎手': row.get('jockey_name_short', '')
