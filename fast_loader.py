@@ -1,11 +1,5 @@
 import sqlite3
 import pandas as pd
-import numpy as np
-
-COURSE_MAP = {
-    '01': '札幌', '02': '函館', '03': '福島', '04': '新潟', '05': '東京',
-    '06': '中山', '07': '中京', '08': '京都', '09': '阪神', '10': '小倉'
-}
 
 def get_available_dates(db_path='C:/Ugaura/sqlite/jra_race.db'):
     conn = sqlite3.connect(db_path)
@@ -13,7 +7,8 @@ def get_available_dates(db_path='C:/Ugaura/sqlite/jra_race.db'):
     SELECT DISTINCT 
         rd.year || '-' || substr(rd.month_day, 1, 2) || '-' || substr(rd.month_day, 3, 2) AS race_date 
     FROM race_detail rd 
-    WHERE rd.year >= '2024' 
+    WHERE rd.year >= '2024'
+      AND rd.course_code IN ('01', '02', '03', '04', '05', '06', '07', '08', '09', '10')
     ORDER BY race_date DESC;
     """
     df = pd.read_sql(query, conn)
@@ -22,151 +17,108 @@ def get_available_dates(db_path='C:/Ugaura/sqlite/jra_race.db'):
 
 def get_races_for_date(selected_date, db_path='C:/Ugaura/sqlite/jra_race.db'):
     conn = sqlite3.connect(db_path)
-    query = """
-    SELECT DISTINCT 
-        (rd.year || rd.month_day || rd.course_code || rd.times || rd.day || rd.race_number) AS race_id,
-        rd.course_code,
-        CAST(rd.race_number AS INTEGER) AS race_number,
-        rd.distance,
-        rd.track_code
-    FROM race_detail rd
-    WHERE (rd.year || '-' || substr(rd.month_day, 1, 2) || '-' || substr(rd.month_day, 3, 2)) = ?
-    ORDER BY rd.course_code, race_number;
-    """
-    df = pd.read_sql(query, conn, params=[selected_date])
-    conn.close()
-    
-    if df.empty:
-        return {}
+    clean_date = selected_date.replace('-', '')
+    year_str = clean_date[:4]
+    month_day_str = clean_date[4:]
 
-    df['course_name'] = df['course_code'].astype(str).str.zfill(2).map(COURSE_MAP).fillna('その他')
-    df['track_type'] = np.where(pd.to_numeric(df['track_code'], errors='coerce').between(10, 22), '芝', 'ダート')
-    df['race_display'] = df['course_name'] + ' ' + df['race_number'].astype(str) + 'R (' + df['track_type'] + df['distance'].astype(str) + 'm)'
+    query = """
+    SELECT 
+        rd.year || rd.month_day || rd.course_code || rd.times || rd.day || rd.race_number AS race_id,
+        rd.course_code,
+        rd.race_number,
+        rd.race_name_main,
+        rd.race_name_short_10,
+        rd.cond_code_youngest,
+        rd.grade_code,
+        rd.track_code,
+        rd.distance
+    FROM race_detail rd
+    WHERE rd.year = ? AND rd.month_day = ?
+      AND rd.course_code IN ('01', '02', '03', '04', '05', '06', '07', '08', '09', '10')
+    ORDER BY rd.course_code, CAST(rd.race_number AS INTEGER);
+    """
+    df = pd.read_sql(query, conn, params=[year_str, month_day_str])
+    conn.close()
+
+    course_map = {
+        '01': '札幌', '02': '函館', '03': '福島', '04': '新潟', '05': '東京',
+        '06': '中山', '07': '中京', '08': '京都', '09': '阪神', '10': '小倉'
+    }
     
-    return df.set_index('race_id')['race_display'].to_dict()
+    def get_class_label(cond, grade):
+        cond = str(cond).strip() if cond is not None else ''
+        grade = str(grade).strip() if grade is not None else ''
+        if grade in ['A', 'B', 'C', 'D', 'E', 'G', 'H', 'L']:
+            return 'OP/重賞'
+        elif cond in ['701', '702', '703']:
+            return '未勝利'
+        elif cond in ['003', '004', '005']:
+            return '1勝クラス'
+        elif cond in ['007', '008', '009', '010']:
+            return '2勝クラス'
+        elif cond in ['014', '015', '016']:
+            return '3勝クラス'
+        elif cond in ['000', '999']:
+            return 'オープン'
+        return '一般'
+
+    races = {}
+    for _, row in df.iterrows():
+        c_name = course_map.get(str(row['course_code']).zfill(2), '他')
+        r_num = int(row['race_number'])
+        
+        raw_short_name = str(row['race_name_short_10']).strip() if pd.notna(row['race_name_short_10']) else ''
+        raw_main_name = str(row['race_name_main']).strip() if pd.notna(row['race_name_main']) else ''
+        
+        if raw_short_name:
+            race_name_disp = raw_short_name
+        elif raw_main_name:
+            race_name_disp = raw_main_name
+        else:
+            race_name_disp = get_class_label(row['cond_code_youngest'], row['grade_code'])
+
+        t_code = pd.to_numeric(row['track_code'], errors='coerce')
+        t_type = '芝' if 10 <= t_code <= 22 else 'ダ'
+        dist = f"{t_type}{row['distance']}m"
+        
+        display_str = f"{c_name} {r_num}R {race_name_disp} ({dist})"
+        races[row['race_id']] = display_str
+
+    return races
 
 def load_single_race_card(race_id, db_path='C:/Ugaura/sqlite/jra_race.db'):
     conn = sqlite3.connect(db_path)
     query = """
-    WITH target_horses AS (
-        SELECT 
-            (rd.year || rd.month_day || rd.course_code || rd.times || rd.day || rd.race_number) AS race_id,
-            rd.year || '-' || substr(rd.month_day, 1, 2) || '-' || substr(rd.month_day, 3, 2) AS race_date,
-            rd.course_code,
-            CAST(rd.race_number AS INTEGER) AS race_number,
-            rd.distance,
-            rd.track_code,
-            rd.turf_condition_code,
-            rd.dirt_condition_code,
-            hri.horse_number,
-            hri.horse_name,
-            hri.blood_reg_number AS horse_id,
-            hri.bracket_number,
-            hri.sex_code,
-            hri.horse_age,
-            CAST(hri.weight_carried AS REAL) / 10.0 AS weight_carried,
-            hri.jockey_name_short,
-            hri.jockey_code,
-            hri.horse_weight,
-            hri.weight_change_sign,
-            hri.weight_change,
-            hri.win_odds,
-            hri.corner_4_order,
-            hri.running_style,
-            CASE WHEN CAST(hri.final_order AS INTEGER) = 1 THEN 1 ELSE 0 END AS is_win
-        FROM race_detail rd
-        JOIN horse_race_info hri 
-            ON rd.year = hri.year AND rd.month_day = hri.month_day AND rd.course_code = hri.course_code 
-            AND rd.times = hri.times AND rd.day = hri.day AND rd.race_number = hri.race_number
-        WHERE (rd.year || rd.month_day || rd.course_code || rd.times || rd.day || rd.race_number) = ?
-    ),
-    current_jockeys AS (
-        SELECT DISTINCT jockey_code FROM target_horses WHERE jockey_code IS NOT NULL AND jockey_code != ''
-    ),
-    jockey_stats AS (
-        SELECT 
-            hri.jockey_code,
-            ROUND(AVG(CASE WHEN CAST(hri.final_order AS INTEGER) BETWEEN 1 AND 3 THEN 1.0 ELSE 0.0 END), 3) AS jockey_top3_rate_100,
-            ROUND(AVG(CASE WHEN CAST(hri.final_order AS INTEGER) = 1 THEN 1.0 ELSE 0.0 END), 3) AS jockey_win_rate_100
-        FROM (
-            SELECT 
-                hri.jockey_code, 
-                hri.final_order, 
-                ROW_NUMBER() OVER (
-                    PARTITION BY hri.jockey_code 
-                    ORDER BY rd.year DESC, rd.month_day DESC
-                ) AS rn
-            FROM horse_race_info hri 
-            JOIN race_detail rd 
-                ON rd.year = hri.year AND rd.month_day = hri.month_day AND rd.course_code = hri.course_code 
-                AND rd.times = hri.times AND rd.day = hri.day AND rd.race_number = hri.race_number
-            WHERE hri.jockey_code IN (SELECT jockey_code FROM current_jockeys)
-              AND (rd.year || '-' || substr(rd.month_day, 1, 2) || '-' || substr(rd.month_day, 3, 2)) < (SELECT MAX(race_date) FROM target_horses)
-              AND hri.abnormality_code IN ('0', '7')
-        ) hri
-        WHERE rn <= 100
-        GROUP BY hri.jockey_code
-    ),
-    history AS (
-        SELECT 
-            (rd.year || rd.month_day || rd.course_code || rd.times || rd.day || rd.race_number) AS race_id,
-            rd.year || '-' || substr(rd.month_day, 1, 2) || '-' || substr(rd.month_day, 3, 2) AS race_date,
-            hri.blood_reg_number AS horse_id,
-            ucv.ucv_score,
-            u3f.ucv_3f_score
-        FROM race_detail rd
-        JOIN horse_race_info hri 
-            ON rd.year = hri.year AND rd.month_day = hri.month_day AND rd.course_code = hri.course_code 
-            AND rd.times = hri.times AND rd.day = hri.day AND rd.race_number = hri.race_number
-        LEFT JOIN horse_race_ucv ucv 
-            ON (rd.year || rd.month_day || rd.course_code || rd.times || rd.day || rd.race_number) = ucv.race_id 
-            AND hri.horse_number = ucv.horse_number
-        LEFT JOIN horse_race_ucv_3f u3f 
-            ON (rd.year || rd.month_day || rd.course_code || rd.times || rd.day || rd.race_number) = u3f.race_id 
-            AND hri.horse_number = u3f.horse_number
-        WHERE hri.blood_reg_number IN (SELECT horse_id FROM target_horses)
-          AND hri.abnormality_code IN ('0', '7')
-    ),
-    history_rolling AS (
-        SELECT 
-            race_id,
-            horse_id,
-            LAG(ucv_score, 1) OVER (PARTITION BY horse_id ORDER BY race_date ASC, race_id ASC) AS prev_ucv_score,
-            MAX(ucv_score) OVER (PARTITION BY horse_id ORDER BY race_date ASC, race_id ASC ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING) AS max_ucv_score_5,
-            AVG(ucv_score) OVER (PARTITION BY horse_id ORDER BY race_date ASC, race_id ASC ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING) AS avg_ucv_score_5,
-            MAX(ucv_3f_score) OVER (PARTITION BY horse_id ORDER BY race_date ASC, race_id ASC ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING) AS max_ucv_3f_5,
-            AVG(ucv_3f_score) OVER (PARTITION BY horse_id ORDER BY race_date ASC, race_id ASC ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING) AS avg_ucv_3f_5
-        FROM history
-    )
     SELECT 
-        th.*,
-        hr.prev_ucv_score,
-        hr.max_ucv_score_5,
-        hr.avg_ucv_score_5,
-        hr.max_ucv_3f_5,
-        hr.avg_ucv_3f_5,
-        ds.dash_score_median,
-        rt.elo_rating_turf,
-        rt.elo_rating_dirt,
-        COALESCE(js.jockey_top3_rate_100, 0.25) AS jockey_top3_rate_100,
-        COALESCE(js.jockey_win_rate_100, 0.10) AS jockey_win_rate_100
-    FROM target_horses th
-    LEFT JOIN history_rolling hr ON th.race_id = hr.race_id AND th.horse_id = hr.horse_id
-    LEFT JOIN feature_dash_score ds ON th.race_id = ds.race_id AND th.horse_id = ds.horse_id
-    LEFT JOIN feature_opponent_rating rt ON th.race_id = rt.race_id AND th.horse_id = rt.horse_id
-    LEFT JOIN jockey_stats js ON th.jockey_code = js.jockey_code
-    ORDER BY CAST(th.horse_number AS INTEGER);
+        (rd.year || rd.month_day || rd.course_code || rd.times || rd.day || rd.race_number) AS race_id,
+        rd.year || '-' || substr(rd.month_day, 1, 2) || '-' || substr(rd.month_day, 3, 2) AS race_date,
+        rd.course_code,
+        rd.race_number,
+        rd.race_name_main,
+        rd.cond_code_youngest,
+        rd.grade_code,
+        hri.bracket_number,
+        hri.horse_number,
+        hri.blood_reg_number AS horse_id,
+        hri.horse_name,
+        hri.sex_code,
+        hri.horse_age,
+        hri.weight_carried,
+        hri.jockey_name_short,
+        hri.horse_weight,
+        hri.weight_change_sign,
+        hri.weight_change,
+        hri.win_odds,
+        hri.win_popularity
+    FROM race_detail rd
+    JOIN horse_race_info hri 
+        ON rd.year = hri.year AND rd.month_day = hri.month_day AND rd.course_code = hri.course_code 
+        AND rd.times = hri.times AND rd.day = hri.day AND rd.race_number = hri.race_number
+    WHERE (rd.year || rd.month_day || rd.course_code || rd.times || rd.day || rd.race_number) = ?
+      AND hri.abnormality_code IN ('0', '7')
+      AND hri.horse_number != '00'
+    ORDER BY CAST(hri.horse_number AS INTEGER);
     """
     df = pd.read_sql(query, conn, params=[race_id])
     conn.close()
-    
-    if df.empty:
-        return df
-
-    df['course_name'] = df['course_code'].astype(str).str.zfill(2).map(COURSE_MAP).fillna('その他')
-    df['track_type'] = np.where(pd.to_numeric(df['track_code'], errors='coerce').between(10, 22), '芝', 'ダート')
-    df['target_elo_rating'] = np.where(df['track_type'] == '芝', df['elo_rating_turf'], df['elo_rating_dirt'])
-    df['avg_ucv_score_5'] = df['avg_ucv_score_5'].fillna(0.0)
-    df['avg_ucv_3f_5'] = df['avg_ucv_3f_5'].fillna(0.0)
-
     return df
