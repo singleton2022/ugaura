@@ -219,25 +219,16 @@ def load_past_races_for_horses(horse_id_list, current_race_date, db_path='C:/Uga
 
         for _, row in df.iterrows():
             p_id = str(row['past_race_id'])
-            h_id = str(row['horse_id'])
             
             race_stats = total_by_race.get(p_id, {'total_1st': 0, 'total_23rd': 0, 'total_next_ran': 0})
             total_1st = race_stats['total_1st']
             total_23rd = race_stats['total_23rd']
             total_ran = race_stats['total_next_ran']
             
-            self_ran = 1 if (p_id, h_id) in self_1st_map else 0
-            self_1st = self_1st_map.get((p_id, h_id), 0)
-            self_23rd = self_23rd_map.get((p_id, h_id), 0)
-            
-            other_1st = max(0, total_1st - self_1st)
-            other_23rd = max(0, total_23rd - self_23rd)
-            other_ran = max(0, total_ran - self_ran)
-            
-            other_1st_counts.append(other_1st)
-            other_23rd_counts.append(other_23rd)
-            other_top3_counts.append(other_1st + other_23rd)
-            other_next_rans.append(other_ran)
+            other_1st_counts.append(total_1st)
+            other_23rd_counts.append(total_23rd)
+            other_top3_counts.append(total_1st + total_23rd)
+            other_next_rans.append(total_ran)
 
         df['other_next_1st_count'] = other_1st_counts
         df['other_next_23rd_count'] = other_23rd_counts

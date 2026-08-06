@@ -16,6 +16,55 @@ def format_date_label(d_str):
     except Exception:
         return d_str
 
+def calc_interval_info(recent_date_str, past_date_str):
+    """
+    recent_date_str: より新しい日付 (例: 当日または前走日)
+    past_date_str: より古い過去走日付
+    戻り値: (char, style_str)
+    """
+    if not recent_date_str or not past_date_str:
+        return " ", "text-align: center;"
+    try:
+        dt_recent = datetime.strptime(str(recent_date_str).strip(), '%Y-%m-%d')
+        dt_past = datetime.strptime(str(past_date_str).strip(), '%Y-%m-%d')
+        days = (dt_recent - dt_past).days
+        
+        if days <= 9:
+            # 9日以内: 黄色 (=)
+            return "=", "background-color: #FFF59D; color: #000; font-weight: bold; text-align: center;"
+        elif 70 <= days < 182:
+            # 10週間(70日)〜半年(182日)未満: 黄緑 (+)
+            return "+", "background-color: #AED581; color: #000; font-weight: bold; text-align: center;"
+        elif days >= 182:
+            # 半年以上: 赤 (+)
+            return "+", "background-color: #EF5350; color: #FFF; font-weight: bold; text-align: center;"
+        else:
+            return " ", "text-align: center;"
+    except Exception:
+        return " ", "text-align: center;"
+
+def get_track_dist_label(track_code, distance):
+    """
+    track_code: トラックコード (10~22: 芝, その他: ダート)
+    distance: 距離 (例: 1600, 1150)
+    戻り値: (label_text, style_str)
+    """
+    if pd.isna(distance) or not str(distance).strip().isdigit():
+        return "", ""
+    d_num = int(distance)
+    d_hundred = d_num // 100
+    
+    try:
+        t_code_num = int(track_code)
+        is_turf = 10 <= t_code_num <= 22
+    except (ValueError, TypeError):
+        is_turf = False
+
+    if is_turf:
+        return f"芝{d_hundred}", "color: #2e7d32; font-weight: bold; padding: 2px 4px;"
+    else:
+        return f"ダ{d_hundred}", "color: #795548; font-weight: bold; padding: 2px 4px;"
+
 # クラス情報およびランク判定
 def get_class_info(cond_code, grade_code, course_code=None):
     cond = str(cond_code).strip() if cond_code is not None else ''
@@ -107,11 +156,27 @@ def fetch_dates():
     return get_available_dates()
 
 def main():
-    st.set_page_config(page_title="新・出馬表（過去着順・他馬次走3着以内頭数・クラス別色分け）", layout="wide")
+    st.set_page_config(page_title="出馬表", layout="wide")
 
-    # サイドバーの横幅をゆったり拡張するカスタムCSS
+    # 上部余白圧縮およびサイドバー拡張のカスタムCSS
     st.markdown("""
     <style>
+        header[data-testid="stHeader"] {
+            background-color: transparent !important;
+        }
+        .block-container {
+            padding-top: 2.2rem !important;
+            padding-bottom: 0.5rem !important;
+        }
+        h1 {
+            padding-top: 0rem !important;
+            margin-top: 0rem !important;
+            margin-bottom: 0.2rem !important;
+        }
+        h3 {
+            margin-top: 0.2rem !important;
+            margin-bottom: 0.3rem !important;
+        }
         section[data-testid="stSidebar"] {
             width: 380px !important;
         }
@@ -119,7 +184,7 @@ def main():
     """, unsafe_allow_html=True)
 
     # メインタイトル
-    st.title("🏇 JRA 新・出馬表（過去着順 ＋ 他走馬の次走3着以内頭数）")
+    st.title("🏇 出馬表")
 
     dates = fetch_dates()
     if not dates:
@@ -163,15 +228,9 @@ def main():
 
     # 凡例表示
     st.markdown("""
-    <div style="margin-bottom: 15px; padding: 12px 18px; background-color: #f8f9fa; border-radius: 8px; border: 1px solid #e9ecef;">
-        <div style="font-weight: bold; font-size: 0.95em; color: #343a40; margin-bottom: 6px;">
-            💡 過去5走（前走〜５走前）セルの表記: <span style="color: #0d6efd; font-weight: bold;">[自馬の着順](前走1着馬の次走着順-他同走馬の次走1着数-2,3着数)</span> （例: 1着(2-1-2) = 自馬1着、前走1着馬の次走2着、他1頭が次走1着、2頭が次走2,3着。※次走4着以下・データ無は *）
-        </div>
-        <div style="display: flex; gap: 15px; align-items: center;">
-            <span style="font-weight: bold; font-size: 0.9em; color: #495057;">クラス判定背景色:</span>
-            <span style="background-color: #FFF59D; color: #333; padding: 4px 12px; border-radius: 4px; font-weight: bold; font-size: 0.85em; border: 1px solid #FBC02D;">■ 同じクラスのレース</span>
-            <span style="background-color: #81D4FA; color: #333; padding: 4px 12px; border-radius: 4px; font-weight: bold; font-size: 0.85em; border: 1px solid #0288D1;">■ 下のクラスのレース (格下)</span>
-            <span style="background-color: #CE93D8; color: #333; padding: 4px 12px; border-radius: 4px; font-weight: bold; font-size: 0.85em; border: 1px solid #7B1FA2;">■ 上のクラスのレース (格上)</span>
+    <div style="margin-bottom: 8px; padding: 8px 12px; background-color: #f8f9fa; border-radius: 8px; border: 1px solid #e9ecef;">
+        <div style="font-weight: bold; font-size: 0.9em; color: #343a40;">
+            💡 過去5走（前走〜５走前）セルの表記: <span style="color: #0d6efd; font-weight: bold;">[コース・距離][自馬の着順](前走1着馬の次走着順-出走馬の次走1着数-2,3着数)</span> （例: 芝16 1着(2-1-2) = 芝1600m走、自馬1着、前走1着馬の次走2着、出走馬のうち1頭が次走1着、2頭が次走2,3着）
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -216,11 +275,18 @@ def main():
                         comp = 'lower'
                     else:
                         comp = 'higher'
+
+                    track_code = row.get('track_code', None)
+                    distance = row.get('distance', None)
+                    td_label, td_style = get_track_dist_label(track_code, distance)
                     
                     past_5_map[h_id][rn] = {
                         'text': cell_text,
                         'comp': comp,
                         'class_name': p_cname,
+                        'race_date': row.get('race_date', ''),
+                        'track_dist_label': td_label,
+                        'track_dist_style': td_style,
                         'winner_next_order_code': winner_next,
                         'other_1st_count': other_1st,
                         'other_23rd_count': other_23rd,
@@ -231,6 +297,7 @@ def main():
     # 表示用データフレーム構築
     card_rows = []
     comp_matrix = []
+    interval_matrix = []
     
     sex_map = {'1': '牡', '2': '牝', '3': 'セ'}
 
@@ -267,11 +334,18 @@ def main():
 
         # 過去5走 (前走=1, 2走前=2, 3走前=3, 4走前=4, 5走前=5)
         p_data = past_5_map.get(h_id, {})
-        r1 = p_data.get(1, {'text': '', 'comp': 'none'})
-        r2 = p_data.get(2, {'text': '', 'comp': 'none'})
-        r3 = p_data.get(3, {'text': '', 'comp': 'none'})
-        r4 = p_data.get(4, {'text': '', 'comp': 'none'})
-        r5 = p_data.get(5, {'text': '', 'comp': 'none'})
+        r1 = p_data.get(1, {'text': '', 'comp': 'none', 'race_date': '', 'track_dist_label': '', 'track_dist_style': ''})
+        r2 = p_data.get(2, {'text': '', 'comp': 'none', 'race_date': '', 'track_dist_label': '', 'track_dist_style': ''})
+        r3 = p_data.get(3, {'text': '', 'comp': 'none', 'race_date': '', 'track_dist_label': '', 'track_dist_style': ''})
+        r4 = p_data.get(4, {'text': '', 'comp': 'none', 'race_date': '', 'track_dist_label': '', 'track_dist_style': ''})
+        r5 = p_data.get(5, {'text': '', 'comp': 'none', 'race_date': '', 'track_dist_label': '', 'track_dist_style': ''})
+
+        # 出走間隔の判定 (0:当日-前走, 1:前走-2走前, 2:2走前-3走前, 3:3走前-4走前, 4:4走前-5走前)
+        i0_char, i0_style = calc_interval_info(selected_date, r1.get('race_date', ''))
+        i1_char, i1_style = calc_interval_info(r1.get('race_date', ''), r2.get('race_date', ''))
+        i2_char, i2_style = calc_interval_info(r2.get('race_date', ''), r3.get('race_date', ''))
+        i3_char, i3_style = calc_interval_info(r3.get('race_date', ''), r4.get('race_date', ''))
+        i4_char, i4_style = calc_interval_info(r4.get('race_date', ''), r5.get('race_date', ''))
 
         card_rows.append({
             '馬番': int(h_num),
@@ -282,11 +356,26 @@ def main():
             '斤量': weight_carried,
             'オッズ': odds_fmt,
             '馬体重': h_weight,
-            '前走': r1['text'],
-            '２走前': r2['text'],
-            '３走前': r3['text'],
-            '４走前': r4['text'],
-            '５走前': r5['text']
+            'r1': r1['text'],
+            'r1_td_label': r1['track_dist_label'],
+            'r1_td_style': r1['track_dist_style'],
+            'r2': r2['text'],
+            'r2_td_label': r2['track_dist_label'],
+            'r2_td_style': r2['track_dist_style'],
+            'r3': r3['text'],
+            'r3_td_label': r3['track_dist_label'],
+            'r3_td_style': r3['track_dist_style'],
+            'r4': r4['text'],
+            'r4_td_label': r4['track_dist_label'],
+            'r4_td_style': r4['track_dist_style'],
+            'r5': r5['text'],
+            'r5_td_label': r5['track_dist_label'],
+            'r5_td_style': r5['track_dist_style'],
+            'i0_char': i0_char,
+            'i1_char': i1_char,
+            'i2_char': i2_char,
+            'i3_char': i3_char,
+            'i4_char': i4_char,
         })
         
         comp_matrix.append({
@@ -297,33 +386,140 @@ def main():
             5: r5['comp']
         })
 
-    disp_df = pd.DataFrame(card_rows)
-    disp_df = disp_df.sort_values('馬番').reset_index(drop=True)
+        interval_matrix.append({
+            0: (i0_char, i0_style),
+            1: (i1_char, i1_style),
+            2: (i2_char, i2_style),
+            3: (i3_char, i3_style),
+            4: (i4_char, i4_style),
+        })
 
-    # ユーザー指示のカラム並び順: 枠, 馬番, 馬名, 性齢, 騎手, 斤量, オッズ, 馬体重, 前走, ２走前...
-    show_cols = ['枠', '馬番', '馬名', '性齢', '騎手', '斤量', 'オッズ', '馬体重', '前走', '２走前', '３走前', '４走前', '５走前']
-    show_df = disp_df[show_cols]
+    disp_df = pd.DataFrame(card_rows).sort_values('馬番').reset_index(drop=True)
+    card_rows = disp_df.to_dict(orient='records')
 
-    def style_past_races_clean(df):
-        styles = pd.DataFrame('', index=df.index, columns=df.columns)
-        color_map = {
-            'same': 'background-color: #FFF59D; color: #000; font-weight: bold; text-align: center;',   # 黄色
-            'lower': 'background-color: #81D4FA; color: #000; font-weight: bold; text-align: center;',  # 水色
-            'higher': 'background-color: #CE93D8; color: #000; font-weight: bold; text-align: center;', # 赤紫
-            'none': 'text-align: center;'
-        }
-        for i in range(len(df)):
-            styles.loc[i, '前走'] = color_map.get(comp_matrix[i][1], 'text-align: center;')
-            styles.loc[i, '２走前'] = color_map.get(comp_matrix[i][2], 'text-align: center;')
-            styles.loc[i, '３走前'] = color_map.get(comp_matrix[i][3], 'text-align: center;')
-            styles.loc[i, '４走前'] = color_map.get(comp_matrix[i][4], 'text-align: center;')
-            styles.loc[i, '５走前'] = color_map.get(comp_matrix[i][5], 'text-align: center;')
-        return styles
+    # HTMLテーブル描画（間隔セル幅を18pxに極小化、過去走セルを2分割）
+    color_map = {
+        'same': 'background-color: #FFF59D; color: #000; font-weight: bold;',
+        'lower': 'background-color: #81D4FA; color: #000; font-weight: bold;',
+        'higher': 'background-color: #CE93D8; color: #000; font-weight: bold;',
+        'none': ''
+    }
 
-    styled_df = show_df.style.apply(style_past_races_clean, axis=None)
+    html_code = """<style>
+.race-card-container {
+    width: 100%;
+    overflow-x: auto;
+    margin-bottom: 20px;
+}
+.race-card-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+.race-card-table th, .race-card-table td {
+    border: 1px solid #dcdfe6;
+    padding: 6px 4px;
+    text-align: center;
+    vertical-align: middle;
+    white-space: nowrap;
+}
+.race-card-table th {
+    background-color: #f2f4f7;
+    color: #333;
+    font-weight: 600;
+}
+/* 間隔セルの文字幅ぴったり極小固定 */
+.race-card-table td.col-int, .race-card-table th.col-int {
+    width: 18px !important;
+    min-width: 18px !important;
+    max-width: 18px !important;
+    padding: 2px 0px !important;
+    font-size: 12px;
+    font-weight: bold;
+}
+.race-card-table td.horse-name {
+    text-align: left;
+    padding-left: 8px;
+    font-weight: bold;
+}
+</style>
+<div class="race-card-container">
+<table class="race-card-table">
+<thead>
+<tr>
+<th>枠</th>
+<th>馬番</th>
+<th>馬名</th>
+<th>性齢</th>
+<th>騎手</th>
+<th>斤量</th>
+<th>オッズ</th>
+<th>馬体重</th>
+<th class="col-int"></th>
+<th colspan="2">前走</th>
+<th class="col-int"></th>
+<th colspan="2">２走前</th>
+<th class="col-int"></th>
+<th colspan="2">３走前</th>
+<th class="col-int"></th>
+<th colspan="2">４走前</th>
+<th class="col-int"></th>
+<th colspan="2">５走前</th>
+</tr>
+</thead>
+<tbody>"""
 
-    calc_height = (len(disp_df) + 1) * 38 + 10
-    st.dataframe(styled_df, width="stretch", height=calc_height, hide_index=True)
+    for i, r in enumerate(card_rows):
+        comp = comp_matrix[i]
+        int_m = interval_matrix[i]
+        
+        c1_style = color_map.get(comp[1], '')
+        c2_style = color_map.get(comp[2], '')
+        c3_style = color_map.get(comp[3], '')
+        c4_style = color_map.get(comp[4], '')
+        c5_style = color_map.get(comp[5], '')
+
+        i0_char, i0_st = int_m[0]
+        i1_char, i1_st = int_m[1]
+        i2_char, i2_st = int_m[2]
+        i3_char, i3_st = int_m[3]
+        i4_char, i4_st = int_m[4]
+
+        html_code += f"""<tr>
+<td>{r['枠']}</td>
+<td>{r['馬番']}</td>
+<td class="horse-name">{r['馬名']}</td>
+<td>{r['性齢']}</td>
+<td>{r['騎手']}</td>
+<td>{r['斤量']}</td>
+<td>{r['オッズ']}</td>
+<td>{r['馬体重']}</td>
+<td class="col-int" style="{i0_st}">{i0_char}</td>
+<td style="{r['r1_td_style']}">{r['r1_td_label']}</td>
+<td style="{c1_style}">{r['r1']}</td>
+<td class="col-int" style="{i1_st}">{i1_char}</td>
+<td style="{r['r2_td_style']}">{r['r2_td_label']}</td>
+<td style="{c2_style}">{r['r2']}</td>
+<td class="col-int" style="{i2_st}">{i2_char}</td>
+<td style="{r['r3_td_style']}">{r['r3_td_label']}</td>
+<td style="{c3_style}">{r['r3']}</td>
+<td class="col-int" style="{i3_st}">{i3_char}</td>
+<td style="{r['r4_td_style']}">{r['r4_td_label']}</td>
+<td style="{c4_style}">{r['r4']}</td>
+<td class="col-int" style="{i4_st}">{i4_char}</td>
+<td style="{r['r5_td_style']}">{r['r5_td_label']}</td>
+<td style="{c5_style}">{r['r5']}</td>
+</tr>"""
+
+    html_code += """</tbody>
+</table>
+</div>"""
+
+    if hasattr(st, 'html'):
+        st.html(html_code)
+    else:
+        st.markdown(html_code, unsafe_allow_html=True)
 
     # 過去走詳細展開
     if not past_df.empty:
