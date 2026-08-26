@@ -45,9 +45,6 @@ def get_class_info(cond_code, grade_code, course_code=None):
     elif grade in ['D', 'F', 'G', 'H']:
         return 5.0, '重賞'
 
-    if is_local:
-        return 0.5, '地方'
-
     if cond in ['701']:
         return 1.0, '新馬'
     elif cond in ['702', '703']:
@@ -60,6 +57,9 @@ def get_class_info(cond_code, grade_code, course_code=None):
         return 4.0, '3勝クラス'
     elif cond in ['000', '999']:
         return 5.0, 'オープン'
+
+    if is_local:
+        return 0.5, '地方'
 
     return 3.0, '一般'
 
@@ -185,7 +185,7 @@ def load_past_races_for_horses(horse_id_list, current_race_date, db_path='C:/Uga
                     t_base = float(np.mean(times))
                 race_time_stats[str(p_id)] = {'winner_time': winner_t, 'base_time': t_base}
 
-    # 2. プレレースレベル（PL）集計：過去走レース出走各馬の直前走（前走）成績
+    # 2. 過去走レース出走各馬の直前走（前走）成績集計
     query_pre_races = f"""
     WITH target_past_races AS (
         SELECT DISTINCT 
@@ -253,7 +253,8 @@ def load_past_races_for_horses(horse_id_list, current_race_date, db_path='C:/Uga
     pre_stats_map = {}
     if not pre_df.empty:
         for past_id, group in pre_df.groupby('past_race_id'):
-            same_23 = 0
+            same_2nd = 0
+            same_3rd = 0
             lower_1st = 0
             for _, r in group.iterrows():
                 curr_rank, _ = get_class_info(r['past_cond'], r['past_grade'], r['past_course'])
@@ -262,20 +263,24 @@ def load_past_races_for_horses(horse_id_list, current_race_date, db_path='C:/Uga
                 p_order_str = str(r['prev_order']).strip()
                 if p_order_str.isdigit():
                     p_order = int(p_order_str)
-                    if prev_rank == curr_rank and (p_order == 2 or p_order == 3):
-                        same_23 += 1
+                    if prev_rank == curr_rank:
+                        if p_order == 2:
+                            same_2nd += 1
+                        elif p_order == 3:
+                            same_3rd += 1
                     elif prev_rank < curr_rank and p_order == 1:
                         lower_1st += 1
                         
-            pl_score = (same_23 * 1) + (lower_1st * 1)
+            pl_score = (same_2nd * 1) + (same_3rd * 1) + (lower_1st * 1)
             pre_stats_map[str(past_id)] = {
                 'pl_score': pl_score,
-                'same_23': same_23,
+                'same_2nd': same_2nd,
+                'same_3rd': same_3rd,
                 'lower_1st': lower_1st,
-                'pl_breakdown_str': f"({same_23}-{lower_1st})"
+                'pre_breakdown_str': f"({same_2nd}-{same_3rd}-{lower_1st})"
             }
 
-    # 3. 事後レースレベル（L）集計：過去走レース出走各馬の次走成績
+    # 3. 過去走レース出走各馬の次走成績集計
     query_next_races = f"""
     WITH target_past_races AS (
         SELECT DISTINCT 
@@ -318,7 +323,8 @@ def load_past_races_for_horses(horse_id_list, current_race_date, db_path='C:/Uga
         past_race_id,
         horse_id,
         CASE WHEN CAST(final_order AS INTEGER) = 1 THEN 1 ELSE 0 END AS self_next_1st,
-        CASE WHEN CAST(final_order AS INTEGER) BETWEEN 2 AND 3 THEN 1 ELSE 0 END AS self_next_23rd
+        CASE WHEN CAST(final_order AS INTEGER) = 2 THEN 1 ELSE 0 END AS self_next_2nd,
+        CASE WHEN CAST(final_order AS INTEGER) = 3 THEN 1 ELSE 0 END AS self_next_3rd
     FROM next_races
     WHERE rn = 1;
     """
@@ -395,12 +401,14 @@ def load_past_races_for_horses(horse_id_list, current_race_date, db_path='C:/Uga
     if not next_df.empty:
         total_by_race = next_df.groupby('past_race_id').agg(
             total_1st=('self_next_1st', 'sum'),
-            total_23rd=('self_next_23rd', 'sum'),
+            total_2nd=('self_next_2nd', 'sum'),
+            total_3rd=('self_next_3rd', 'sum'),
             total_next_ran=('self_next_1st', 'count')
         ).to_dict(orient='index')
 
     other_1st_counts = []
-    other_23rd_counts = []
+    other_2nd_counts = []
+    other_3rd_counts = []
     other_top3_counts = []
     other_next_rans = []
     race_level_scores = []
@@ -408,19 +416,21 @@ def load_past_races_for_horses(horse_id_list, current_race_date, db_path='C:/Uga
     time_diff_strs = []
     perf_scores = []
     pl_scores = []
-    pl_breakdowns = []
+    pre_breakdowns = []
+    next_breakdowns = []
 
     for _, row in df.iterrows():
         p_id = str(row['past_race_id'])
         w_code = str(row['winner_next_order_code'])
         
-        race_stats = total_by_race.get(p_id, {'total_1st': 0, 'total_23rd': 0, 'total_next_ran': 0})
+        race_stats = total_by_race.get(p_id, {'total_1st': 0, 'total_2nd': 0, 'total_3rd': 0, 'total_next_ran': 0})
         total_1st = race_stats['total_1st']
-        total_23rd = race_stats['total_23rd']
+        total_2nd = race_stats['total_2nd']
+        total_3rd = race_stats['total_3rd']
         total_ran = race_stats['total_next_ran']
         
         w_pts = winner_pts_map.get(w_code, 0)
-        l_score = w_pts + (total_1st * 3) + (total_23rd * 1)
+        l_score = w_pts + (total_1st * 3) + ((total_2nd + total_3rd) * 1)
         
         if l_score >= 10:
             rank = 'S'
@@ -451,14 +461,19 @@ def load_past_races_for_horses(horse_id_list, current_race_date, db_path='C:/Uga
             td_str = ""
             p_score = 0.0
 
-        # プレレースレベル（PL）
-        pre_info = pre_stats_map.get(p_id, {'pl_score': 0, 'pl_breakdown_str': '(0-0)'})
+        # 前走着度数
+        pre_info = pre_stats_map.get(p_id, {'pl_score': 0, 'same_2nd': 0, 'same_3rd': 0, 'lower_1st': 0, 'pre_breakdown_str': '(0-0-0)'})
         pl_scores.append(pre_info['pl_score'])
-        pl_breakdowns.append(pre_info['pl_breakdown_str'])
+        pre_breakdowns.append(pre_info['pre_breakdown_str'])
+
+        # 次走着度数: (1着馬の次走着順-次走2着数-次走3着数-次走頭数)
+        next_bd_str = f"({w_code}-{total_1st}-{total_2nd}-{total_3rd}-{total_ran})"
+        next_breakdowns.append(next_bd_str)
 
         other_1st_counts.append(total_1st)
-        other_23rd_counts.append(total_23rd)
-        other_top3_counts.append(total_1st + total_23rd)
+        other_2nd_counts.append(total_2nd)
+        other_3rd_counts.append(total_3rd)
+        other_top3_counts.append(total_1st + total_2nd + total_3rd)
         other_next_rans.append(total_ran)
         race_level_scores.append(l_score)
         race_level_ranks.append(rank)
@@ -466,7 +481,8 @@ def load_past_races_for_horses(horse_id_list, current_race_date, db_path='C:/Uga
         perf_scores.append(p_score)
 
     df['other_next_1st_count'] = other_1st_counts
-    df['other_next_23rd_count'] = other_23rd_counts
+    df['other_next_2nd_count'] = other_2nd_counts
+    df['other_next_3rd_count'] = other_3rd_counts
     df['other_next_top3_count'] = other_top3_counts
     df['other_next_ran'] = other_next_rans
     df['race_level_score'] = race_level_scores
@@ -474,6 +490,7 @@ def load_past_races_for_horses(horse_id_list, current_race_date, db_path='C:/Uga
     df['winner_time_diff_str'] = time_diff_strs
     df['perf_score'] = perf_scores
     df['pl_score'] = pl_scores
-    df['pl_breakdown_str'] = pl_breakdowns
+    df['pre_breakdown_str'] = pre_breakdowns
+    df['next_breakdown_str'] = next_breakdowns
 
     return df

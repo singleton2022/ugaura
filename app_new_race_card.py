@@ -203,9 +203,8 @@ def render_header_and_legend(target_race_df, selected_date, legend_html):
 def render_standard_card(target_race_df, selected_date, target_rank, target_class_name):
     legend_html = """<div>
         <span style="font-weight: bold; color: #38bdf8;">💡 過去5走（2段表示）:</span><br>
-        <span style="color: #f1f5f9;">【上段】[自馬着順(勝馬タイム差)][PLプレレベル](同クラス前走2,3着数-下位クラス前走1着数)</span><br>
-        <span style="color: #f1f5f9;">【下段】[P実力値/Lレースレベル](勝馬次走着順-次走1着数-次走2,3着数)</span><br>
-        <span style="font-size: 0.9em; color: #94a3b8;">※実力P値5.0以上はクラス背景色を残したまま<span style="color: #ff6b6b; font-weight: bold;">赤文字</span>表示</span>
+        <span style="color: #f1f5f9;">【上段】自馬着順(勝馬着差)(前走2着数-前走3着数-前走1着数)</span><br>
+        <span style="color: #f1f5f9;">【下段】(1着馬次走着順-次走1着数-次走2着数-次走3着数-次走頭数)</span>
     </div>"""
     
     render_header_and_legend(target_race_df, selected_date, legend_html)
@@ -226,21 +225,18 @@ def render_standard_card(target_race_df, selected_date, target_rank, target_clas
                     else:
                         self_order_str = ""
                         
-                    winner_next = row.get('winner_next_order_code', '*')
-                    other_1st = row.get('other_next_1st_count', 0)
-                    other_23rd = row.get('other_next_23rd_count', 0)
-                    other_top3 = row.get('other_next_top3_count', 0)
                     level_score = row.get('race_level_score', 0)
                     level_rank = row.get('race_level_rank', 'C')
                     time_diff_str = row.get('winner_time_diff_str', '')
                     perf_score = row.get('perf_score', 0.0)
-                    pl_score = row.get('pl_score', 0)
-                    pl_breakdown = row.get('pl_breakdown_str', '(0-0)')
+                    
+                    pre_bd = row.get('pre_breakdown_str', '(0-0-0)')
+                    next_bd = row.get('next_breakdown_str', '(*-0-0-0-0)')
 
                     td_disp = f"({time_diff_str})" if time_diff_str else ""
                     
-                    line1 = f"{self_order_str}{td_disp}[PL{pl_score}]{pl_breakdown}".strip()
-                    line2 = f"[P{perf_score:.1f}/L{level_score}]({winner_next}-{other_1st}-{other_23rd})"
+                    line1 = f"{self_order_str}{td_disp}{pre_bd}".strip()
+                    line2 = f"{next_bd}"
                     
                     if line1:
                         cell_html = f"<div>{line1}</div><div style='font-size: 0.95em;'>{line2}</div>"
@@ -270,21 +266,14 @@ def render_standard_card(target_race_df, selected_date, target_rank, target_clas
                         'race_date': row.get('race_date', ''),
                         'track_dist_label': td_label,
                         'track_dist_style': td_style,
-                        'winner_next_order_code': winner_next,
-                        'other_1st_count': other_1st,
-                        'other_23rd_count': other_23rd,
-                        'other_top3_count': other_top3,
-                        'other_next_ran': row.get('other_next_ran', 0),
                         'race_level_score': level_score,
                         'race_level_rank': level_rank,
-                        'perf_score': perf_score,
-                        'is_red_highlight': (perf_score >= 5.0)
+                        'perf_score': perf_score
                     }
 
     card_rows = []
     comp_matrix = []
     interval_matrix = []
-    red_highlight_matrix = []
     
     sex_map = {'1': '牡', '2': '牝', '3': 'セ'}
 
@@ -316,11 +305,11 @@ def render_standard_card(target_race_df, selected_date, target_rank, target_clas
         )
 
         p_data = past_5_map.get(h_id, {})
-        r1 = p_data.get(1, {'text': '', 'comp': 'none', 'race_date': '', 'track_dist_label': '', 'track_dist_style': '', 'is_red_highlight': False})
-        r2 = p_data.get(2, {'text': '', 'comp': 'none', 'race_date': '', 'track_dist_label': '', 'track_dist_style': '', 'is_red_highlight': False})
-        r3 = p_data.get(3, {'text': '', 'comp': 'none', 'race_date': '', 'track_dist_label': '', 'track_dist_style': '', 'is_red_highlight': False})
-        r4 = p_data.get(4, {'text': '', 'comp': 'none', 'race_date': '', 'track_dist_label': '', 'track_dist_style': '', 'is_red_highlight': False})
-        r5 = p_data.get(5, {'text': '', 'comp': 'none', 'race_date': '', 'track_dist_label': '', 'track_dist_style': '', 'is_red_highlight': False})
+        r1 = p_data.get(1, {'text': '', 'comp': 'none', 'race_date': '', 'track_dist_label': '', 'track_dist_style': ''})
+        r2 = p_data.get(2, {'text': '', 'comp': 'none', 'race_date': '', 'track_dist_label': '', 'track_dist_style': ''})
+        r3 = p_data.get(3, {'text': '', 'comp': 'none', 'race_date': '', 'track_dist_label': '', 'track_dist_style': ''})
+        r4 = p_data.get(4, {'text': '', 'comp': 'none', 'race_date': '', 'track_dist_label': '', 'track_dist_style': ''})
+        r5 = p_data.get(5, {'text': '', 'comp': 'none', 'race_date': '', 'track_dist_label': '', 'track_dist_style': ''})
 
         i0_char, i0_style = calc_interval_info(selected_date, r1.get('race_date', ''))
         i1_char, i1_style = calc_interval_info(r1.get('race_date', ''), r2.get('race_date', ''))
@@ -375,14 +364,6 @@ def render_standard_card(target_race_df, selected_date, target_rank, target_clas
             4: (i4_char, i4_style),
         })
 
-        red_highlight_matrix.append({
-            1: r1['is_red_highlight'],
-            2: r2['is_red_highlight'],
-            3: r3['is_red_highlight'],
-            4: r4['is_red_highlight'],
-            5: r5['is_red_highlight'],
-        })
-
     disp_df = pd.DataFrame(card_rows).sort_values('馬番').reset_index(drop=True)
     card_rows = disp_df.to_dict(orient='records')
 
@@ -393,12 +374,9 @@ def render_standard_card(target_race_df, selected_date, target_rank, target_clas
         'none': ''
     }
 
-    def build_cell_style(comp, is_red):
+    def build_cell_style(comp):
         bg = base_bg_map.get(comp, '')
-        if is_red:
-            return f"{bg} color: #D32F2F; font-weight: bold;"
-        else:
-            return f"{bg} color: #000; font-weight: bold;" if bg else ""
+        return f"{bg} color: #000; font-weight: bold;" if bg else ""
 
     html_code = """<style>
 .race-card-container {
@@ -467,13 +445,12 @@ def render_standard_card(target_race_df, selected_date, target_rank, target_clas
     for i, r in enumerate(card_rows):
         comp = comp_matrix[i]
         int_m = interval_matrix[i]
-        red_m = red_highlight_matrix[i]
         
-        c1_style = build_cell_style(comp[1], red_m[1])
-        c2_style = build_cell_style(comp[2], red_m[2])
-        c3_style = build_cell_style(comp[3], red_m[3])
-        c4_style = build_cell_style(comp[4], red_m[4])
-        c5_style = build_cell_style(comp[5], red_m[5])
+        c1_style = build_cell_style(comp[1])
+        c2_style = build_cell_style(comp[2])
+        c3_style = build_cell_style(comp[3])
+        c4_style = build_cell_style(comp[4])
+        c5_style = build_cell_style(comp[5])
 
         i0_char, i0_st = int_m[0]
         i1_char, i1_st = int_m[1]
@@ -519,7 +496,7 @@ def render_standard_card(target_race_df, selected_date, target_rank, target_clas
 def render_analysis_card(target_race_df, selected_date):
     legend_html = """<div>
         <span style="font-weight: bold; color: #38bdf8;">💡 凡例:</span><br>
-        <span style="background-color: #ef4444; color: #fff; font-weight: bold; padding: 1px 5px; border-radius: 3px;">赤色</span> 同コース3着内率100%・前走枠(芝外➔内/ダ内➔外)・400m以上短縮<br>
+        <span style="background-color: #ef4444; color: #fff; font-weight: bold; padding: 1px 5px; border-radius: 3px;">赤色</span> 同コース/同回り3着内率100%・前走枠(芝外➔内/ダ内➔外)・400m以上短縮<br>
         <span style="background-color: #0284c7; color: #fff; font-weight: bold; padding: 1px 5px; border-radius: 3px;">水色</span> 前走枠(芝内➔外/ダ外➔内)・前走牝限・初芝ダ<br>
         <span style="background-color: #eab308; color: #000; font-weight: bold; padding: 1px 5px; border-radius: 3px;">黄色</span> 着度数複勝率50%以上
     </div>"""
@@ -530,24 +507,6 @@ def render_analysis_card(target_race_df, selected_date):
     target_course = str(target_race_df['course_code'].iloc[0]).zfill(2) if 'course_code' in target_race_df.columns else '01'
     target_track = target_race_df['track_code'].iloc[0] if 'track_code' in target_race_df.columns else '10'
     target_dist = target_race_df['distance'].iloc[0] if 'distance' in target_race_df.columns else 0
-
-    try:
-        t_code_num = int(target_track)
-        is_turf = 10 <= t_code_num <= 22
-    except (ValueError, TypeError):
-        is_turf = False
-
-    c_name = COURSE_MAP.get(target_course, '当場')
-    t_name_short = '芝' if is_turf else 'ダ'
-    course_col_title = f"{c_name}{t_name_short}成績"
-
-    try:
-        cur_m = int(selected_date.split('-')[1])
-    except Exception:
-        cur_m = 1
-    p_m = (cur_m - 2) % 12 + 1
-    n_m = cur_m % 12 + 1
-    season_col_title = f"{p_m}～{n_m}月成績"
 
     has_slope_col = target_course in ['06', '07', '09']
 
@@ -580,9 +539,16 @@ def render_analysis_card(target_race_df, selected_date):
         )
 
         h_stats = stats_map.get(h_id, {
+            'all_track_stats_str': '全場(0-0-0-0)',
+            'target_course_stats_str': '当場(0-0-0-0)',
             'course_stats_str': '(0-0-0-0)',
             'course_highlight': False,
             'course_color_type': 'none',
+            'right_stats_str': '右(0-0-0-0)',
+            'left_stats_str': '左(0-0-0-0)',
+            'rotation_color_type': 'none',
+            'season_3m_stats_str': '3ヶ月(0-0-0-0)',
+            'single_month_stats_str': '当月(0-0-0-0)',
             'season_stats_str': '(0-0-0-0)',
             'season_highlight': False,
             'slope_stats_str': '(0-0-0-0)',
@@ -606,10 +572,24 @@ def render_analysis_card(target_race_df, selected_date):
         else:
             course_class = ""
 
+        rot_color = h_stats.get('rotation_color_type', 'none')
+        if rot_color == 'red':
+            rot_class = "highlight-red"
+        elif rot_color == 'yellow':
+            rot_class = "highlight-yellow"
+        else:
+            rot_class = ""
+
+        course_html = f"<div>{h_stats['all_track_stats_str']}</div><div>{h_stats['target_course_stats_str']}</div>"
+        rot_html = f"<div>{h_stats['right_stats_str']}</div><div>{h_stats['left_stats_str']}</div>"
+        season_html = f"<div>{h_stats['season_3m_stats_str']}</div><div>{h_stats['single_month_stats_str']}</div>"
+
         cur_brk_num = int(bracket) if bracket.isdigit() else None
         prev_brk_num = h_stats.get('prev_bracket_num', None)
         bracket_color_class = ""
         if cur_brk_num is not None and prev_brk_num is not None:
+            track_num = int(target_track) if str(target_track).isdigit() else 10
+            is_turf = 10 <= track_num <= 22
             if is_turf:
                 if 1 <= prev_brk_num <= 3 and 6 <= cur_brk_num <= 8:
                     bracket_color_class = "highlight-cyan"
@@ -630,9 +610,11 @@ def render_analysis_card(target_race_df, selected_date):
             '斤量': weight_carried,
             'オッズ': odds_fmt,
             '馬体重': h_weight,
-            'course_stats': h_stats['course_stats_str'],
+            'course_html': course_html,
             'course_class': course_class,
-            'season_stats': h_stats['season_stats_str'],
+            'rot_html': rot_html,
+            'rot_class': rot_class,
+            'season_html': season_html,
             'season_hl': h_stats['season_highlight'],
             'slope_stats': h_stats['slope_stats_str'],
             'slope_hl': h_stats['slope_highlight'],
@@ -707,8 +689,9 @@ def render_analysis_card(target_race_df, selected_date):
 <th>斤量</th>
 <th>オッズ</th>
 <th>馬体重</th>
-<th>""" + course_col_title + """</th>
-<th>""" + season_col_title + """</th>"""
+<th>競馬場別成績</th>
+<th>回り別成績</th>
+<th>月別成績</th>"""
 
     if has_slope_col:
         html_code += """
@@ -726,6 +709,7 @@ def render_analysis_card(target_race_df, selected_date):
 
     for r in card_rows:
         c_class = r['course_class']
+        rot_class = r['rot_class']
         s_class = "highlight-yellow" if r['season_hl'] else ""
         sl_class = "highlight-yellow" if r['slope_hl'] else ""
         brk_class = r['bracket_color_class']
@@ -742,8 +726,9 @@ def render_analysis_card(target_race_df, selected_date):
 <td>{r['斤量']}</td>
 <td>{r['オッズ']}</td>
 <td>{r['馬体重']}</td>
-<td class="{c_class}">{r['course_stats']}</td>
-<td class="{s_class}">{r['season_stats']}</td>"""
+<td class="{c_class}">{r['course_html']}</td>
+<td class="{rot_class}">{r['rot_html']}</td>
+<td class="{s_class}">{r['season_html']}</td>"""
 
         if has_slope_col:
             html_code += f"""
