@@ -264,12 +264,17 @@ def load_horse_analysis_stats(horse_id_list, current_race_date, target_course_co
         else:
             rot_color = 'none'
 
-        # 3. 月別成績
+        # 3. 月別成績（3ヶ月成績または当月単独成績が複勝率50%以上で黄色ハイライト）
         season_3m_str = f"{prev_month}～{next_month}月({s_1st}-{s_2nd}-{s_3rd}-{s_4th})"
         single_month_str = f"{cur_month}月({sm_1st}-{sm_2nd}-{sm_3rd}-{sm_4th})"
 
         s_total = s_1st + s_2nd + s_3rd + s_4th
-        s_hl = (s_1st + s_2nd + s_3rd) / s_total >= 0.5 if s_total > 0 else False
+        s_hl_3m = (s_1st + s_2nd + s_3rd) / s_total >= 0.5 if s_total > 0 else False
+
+        sm_total = sm_1st + sm_2nd + sm_3rd + sm_4th
+        sm_hl = (sm_1st + sm_2nd + sm_3rd) / sm_total >= 0.5 if sm_total > 0 else False
+
+        s_hl = s_hl_3m or sm_hl
 
         # 4. 坂コース結果
         sl_total = sl_1st + sl_2nd + sl_3rd + sl_4th
