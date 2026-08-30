@@ -69,7 +69,10 @@ def get_class_info(cond_code, grade_code, course_code=None):
             if c_num not in range(1, 11):
                 is_local = True
         except ValueError:
-            pass
+            is_local = True
+
+    if is_local:
+        return 0.5, '地方'
 
     if grade == 'A':
         return 5.0, 'G1'
@@ -94,9 +97,6 @@ def get_class_info(cond_code, grade_code, course_code=None):
         return 4.0, '3勝クラス'
     elif cond in ['000', '999']:
         return 5.0, 'オープン'
-
-    if is_local:
-        return 0.5, '地方'
 
     return 3.0, '一般'
 
@@ -248,7 +248,18 @@ def render_standard_card(target_race_df, selected_date, target_rank, target_clas
                     p_course = row.get('course_code', None)
                     p_rank, p_cname = get_class_info(p_cond, p_grade, p_course)
                     
-                    if p_rank == target_rank:
+                    is_p_local = False
+                    if p_course is not None:
+                        try:
+                            pc_num = int(str(p_course).strip())
+                            if pc_num not in range(1, 11):
+                                is_p_local = True
+                        except (ValueError, TypeError):
+                            is_p_local = True
+
+                    if is_p_local or p_cname == '地方' or p_rank == 0.5:
+                        comp = 'local'
+                    elif p_rank == target_rank:
                         comp = 'same'
                     elif p_rank < target_rank:
                         comp = 'lower'
@@ -371,6 +382,7 @@ def render_standard_card(target_race_df, selected_date, target_rank, target_clas
         'same': 'background-color: #FFF59D;',
         'lower': 'background-color: #81D4FA;',
         'higher': 'background-color: #CE93D8;',
+        'local': 'background-color: #E0E0E0;',
         'none': ''
     }
 
