@@ -147,4 +147,27 @@ def load_single_race_card(race_id, db_path='C:/Ugaura/sqlite/jra_race.db'):
     df = pd.read_sql(query, conn, params=params)
     conn.close()
 
+    df['race_id'] = clean_id
     return df
+
+@st.cache_data(show_spinner=False)
+def get_race_level_info(race_id, db_path='C:/Ugaura/sqlite/jra_race.db'):
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
+    cur.execute("""
+    SELECT pre_level_score, pre_level_rank, post_level_score, post_level_rank, current_level_score, current_level_rank
+    FROM race_level
+    WHERE race_id = ?;
+    """, (str(race_id).strip(),))
+    row = cur.fetchone()
+    conn.close()
+    if row:
+        return {
+            'pre_level_score': row[0],
+            'pre_level_rank': row[1],
+            'post_level_score': row[2],
+            'post_level_rank': row[3],
+            'current_level_score': row[4],
+            'current_level_rank': row[5],
+        }
+    return None

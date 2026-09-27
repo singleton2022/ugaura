@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import os
 from datetime import datetime
-from fast_loader import get_available_dates, get_races_for_date, load_single_race_card
+from fast_loader import get_available_dates, get_races_for_date, load_single_race_card, get_race_level_info
 from past_races_loader import load_past_races_for_horses
 from analysis_loader import load_horse_analysis_stats
 
@@ -180,6 +180,40 @@ def render_header_and_legend(target_race_df, selected_date, legend_html):
         race_title_str = f"{course_name} {race_num}R {race_name}"
     else:
         race_title_str = f"{course_name} {race_num}R"
+
+    # レースレベル情報 (Pre-Score) の取得
+    race_id = target_race_df['race_id'].iloc[0] if 'race_id' in target_race_df.columns else None
+    pre_badge_html = ""
+    if race_id:
+        rl_info = get_race_level_info(race_id)
+        if rl_info and pd.notna(rl_info.get('pre_level_score')):
+            pre_score = rl_info['pre_level_score']
+            pre_rank = rl_info.get('pre_level_rank', 'C')
+            post_score = rl_info.get('post_level_score')
+            post_rank = rl_info.get('post_level_rank')
+
+            rank_badge_styles = {
+                'S': 'background-color: #dc2626; color: #ffffff;',   # 濃赤 (G1級・超一線級)
+                'A+': 'background-color: #ea580c; color: #ffffff;',  # 鮮やかな赤橙 (重賞上位・ハイレベルOP)
+                'A': 'background-color: #d97706; color: #ffffff;',   # アンバー (3勝上位・OP標準・2歳G1)
+                'B+': 'background-color: #2563eb; color: #ffffff;',  # 鮮やかなブルー (2勝上位・3勝標準・2歳重賞)
+                'B': 'background-color: #10b981; color: #ffffff;',   # エメラルドグリーン (2勝標準・1勝上位)
+                'C+': 'background-color: #0d9488; color: #ffffff;',  # ティール青緑 (1勝標準・未勝利上位)
+                'C': 'background-color: #64748b; color: #ffffff;',   # スレートグレー (未勝利標準)
+                'D': 'background-color: #94a3b8; color: #ffffff;',   # ライトグレー (低調戦)
+            }
+            b_style = rank_badge_styles.get(pre_rank, 'background-color: #64748b; color: #fff;')
+            
+            post_note = ""
+            if pd.notna(post_score) and rl_info.get('post_level_score') is not None:
+                post_b_style = rank_badge_styles.get(post_rank, 'background-color: #64748b; color: #fff;')
+                post_note = f' <span style="font-size: 0.85em; color: #94a3b8; margin-left: 6px;">(事後確定: <span style="{post_b_style} font-weight: bold; padding: 1px 5px; border-radius: 3px;">{post_rank} {post_score:.1f}</span>)</span>'
+                
+            pre_badge_html = f"""<div style="margin-top: 6px; font-size: 0.92em; color: #cbd5e1; display: flex; align-items: center; flex-wrap: wrap;">
+                <span>Pre-Score (レース前レベル): </span>
+                <span style="{b_style} font-weight: bold; padding: 2px 8px; border-radius: 4px; font-size: 0.95em; margin-left: 6px; box-shadow: 0 1px 2px rgba(0,0,0,0.2);">{pre_rank} {pre_score:.1f}</span>
+                {post_note}
+            </div>"""
         
     header_html = f"""<div style="display: flex; justify-content: space-between; align-items: stretch; margin-bottom: 12px; gap: 12px; flex-wrap: wrap;">
     <div style="flex: 1; min-width: 320px; padding: 10px 14px; background-color: #1e293b; border-radius: 8px; border: 1px solid #334155; box-shadow: 0 2px 4px rgba(0,0,0,0.12); display: flex; flex-direction: column; justify-content: center;">
@@ -189,6 +223,7 @@ def render_header_and_legend(target_race_df, selected_date, legend_html):
         <div style="font-size: 0.95em; color: #94a3b8; font-weight: 500;">
             <span style="color: #e2e8f0; font-weight: bold;">{dist_str}</span> ｜ クラス: <span style="font-weight: bold; color: #38bdf8;">{class_name}</span>{fem_badge}
         </div>
+        {pre_badge_html}
     </div>
     <div style="flex: 1.2; min-width: 340px; padding: 8px 12px; background-color: #1e293b; border-radius: 8px; border: 1px solid #334155; box-shadow: 0 2px 4px rgba(0,0,0,0.12); font-size: 0.85em; color: #cbd5e1; line-height: 1.5; display: flex; flex-direction: column; justify-content: center;">
         {legend_html}
@@ -202,12 +237,17 @@ def render_header_and_legend(target_race_df, selected_date, legend_html):
 
 def render_standard_card(target_race_df, selected_date, target_rank, target_class_name):
     legend_html = """<div>
-        <span style="font-weight: bold; color: #38bdf8;">💡 過去5走（2段表示）:</span><br>
-        <span style="color: #f1f5f9;">【上段】自馬着順(勝馬着差)(前走2着数-前走3着数-前走1着数)</span><br>
-        <span style="color: #f1f5f9;">【下段】(1着馬次走着順-次走1着数-次走2着数-次走3着数-次走頭数)</span>
+        <span style="font-weight: bold; color: #38bdf8;">💡 過去5走（自馬パフォーマンス表示）:</span><br>
+        <span style="color: #f1f5f9;">【上段】自馬着順(上位5頭平均差) ｜ <span style="background-color: #dc2626; color: #fff; padding: 1px 4px; border-radius: 3px; font-weight: bold;">S</span>〜<span style="background-color: #94a3b8; color: #fff; padding: 1px 4px; border-radius: 3px; font-weight: bold;">D</span> 自馬パフォーマンス [ランク スコア] <span style="color: #94a3b8; font-size: 0.88em;">(※レースレベルに上位5頭平均差を加算・減算)</span></span><br>
+        <span style="color: #f1f5f9;">【下段】出走各馬の次3走成績 (1着数-2着数-3着数 / 走数) [勝馬次走]</span>
     </div>"""
     
     render_header_and_legend(target_race_df, selected_date, legend_html)
+
+    # 今回レースの Pre-Score を取得（前走との相手関係比較用）
+    target_race_id = target_race_df['race_id'].iloc[0] if 'race_id' in target_race_df.columns else None
+    target_rl = get_race_level_info(target_race_id) if target_race_id else None
+    target_pre_score = target_rl.get('pre_level_score') if target_rl else None
 
     horse_id_list = target_race_df['horse_id'].unique().tolist()
     past_df = load_past_races_for_horses(tuple(horse_id_list), selected_date)
@@ -229,19 +269,86 @@ def render_standard_card(target_race_df, selected_date, target_rank, target_clas
                     level_rank = row.get('race_level_rank', 'C')
                     time_diff_str = row.get('winner_time_diff_str', '')
                     perf_score = row.get('perf_score', 0.0)
-                    
-                    pre_bd = row.get('pre_breakdown_str', '(0-0-0)')
-                    next_bd = row.get('next_breakdown_str', '(*-0-0-0-0)')
 
                     td_disp = f"({time_diff_str})" if time_diff_str else ""
                     
-                    line1 = f"{self_order_str}{td_disp}{pre_bd}".strip()
-                    line2 = f"{next_bd}"
-                    
-                    if line1:
-                        cell_html = f"<div>{line1}</div><div style='font-size: 0.95em;'>{line2}</div>"
+                    # 事後確定レースレベル (Post-Score優先、未出走の場合はCurrent-Score)
+                    rl_score = row.get('rl_post_score')
+                    rl_rank = row.get('rl_post_rank')
+                    if pd.isna(rl_score) or rl_score is None:
+                        rl_score = row.get('rl_current_score')
+                        rl_rank = row.get('rl_current_rank')
+
+                    # 自馬パフォーマンス値 (レースレベルに上位5頭平均差を加算・減算した実質能力値)
+                    perf_score = row.get('rl_perf_score')
+                    perf_rank = row.get('rl_perf_rank')
+                    perf_adj = row.get('rl_perf_adj', 0.0)
+                    if pd.isna(perf_score) or perf_score is None:
+                        perf_score = rl_score
+                        perf_rank = rl_rank
+
+                    # ツールチップ用: 事前水準(Pre-Score)の取得
+                    pre_s = row.get('rl_pre_score')
+                    pre_r = row.get('rl_pre_rank')
+
+                    rank_badge_styles = {
+                        'S': 'background-color: #dc2626; color: #ffffff;',   # 濃赤 (G1級・超一線級)
+                        'A+': 'background-color: #ea580c; color: #ffffff;',  # 鮮やかな赤橙 (重賞上位・ハイレベルOP)
+                        'A': 'background-color: #d97706; color: #ffffff;',   # アンバー (3勝上位・OP標準・2歳G1)
+                        'B+': 'background-color: #2563eb; color: #ffffff;',  # 鮮やかなブルー (2勝上位・3勝標準・2歳重賞)
+                        'B': 'background-color: #10b981; color: #ffffff;',   # エメラルドグリーン (2勝標準・1勝上位)
+                        'C+': 'background-color: #0d9488; color: #ffffff;',  # ティール青緑 (1勝標準・未勝利上位)
+                        'C': 'background-color: #64748b; color: #ffffff;',   # スレートグレー (未勝利標準)
+                        'D': 'background-color: #94a3b8; color: #ffffff;',   # ライトグレー (低調戦)
+                    }
+
+                    if pd.notna(perf_rank) and perf_rank in rank_badge_styles and pd.notna(perf_score):
+                        b_style = rank_badge_styles[perf_rank]
+                        badge_title = f"自馬パフォーマンス: {perf_rank} {perf_score:.1f}"
+                        if pd.notna(rl_score):
+                            badge_title += f" ｜ 元レースレベル: {rl_rank} {rl_score:.1f} (タイム補正: {perf_adj:+.1f}点)"
+                        if pd.notna(pre_s):
+                            badge_title += f" ｜ レース前水準(Pre): {pre_r} {pre_s:.1f}"
+                        if rn == 1 and target_pre_score is not None and pd.notna(pre_s):
+                            diff = pre_s - target_pre_score
+                            if diff >= 3.0:
+                                badge_title += f" ｜ 今回比: {diff:+.1f}点 (相手緩和/前走格上)"
+                            elif diff <= -3.0:
+                                badge_title += f" ｜ 今回比: {diff:+.1f}点 (相手強化/前走格下)"
+                            else:
+                                badge_title += f" ｜ 今回比: {diff:+.1f}点 (同水準)"
+
+                        badge_html = f"<span title='{badge_title}' style='{b_style} font-weight: bold; padding: 1px 5px; border-radius: 3px; font-size: 0.85em; margin-left: 4px; cursor: help;'>{perf_rank} {perf_score:.0f}</span>"
                     else:
-                        cell_html = f"<div style='font-size: 0.95em;'>{line2}</div>"
+                        badge_html = ""
+
+                    line1 = f"<span>{self_order_str}{td_disp}</span>{badge_html}".strip()
+
+                    # 下段: 次3走成績
+                    n3_total = row.get('rl_next3_total', 0)
+                    n3_w = row.get('rl_next3_wins', 0)
+                    n3_2 = row.get('rl_next3_2nd', 0)
+                    n3_3 = row.get('rl_next3_3rd', 0)
+                    w_next = row.get('rl_winner_next')
+
+                    if pd.notna(n3_total) and int(n3_total) > 0:
+                        bd_str = f"次3走:{int(n3_w)}-{int(n3_2)}-{int(n3_3)}/{int(n3_total)}走"
+                        if pd.notna(w_next):
+                            try:
+                                w_int = int(float(w_next))
+                                if 1 <= w_int <= 3:
+                                    w_circle = {1: '①', 2: '②', 3: '③'}[w_int]
+                                    bd_str += f" (勝{w_circle})"
+                                elif w_int > 0:
+                                    bd_str += f" (勝{w_int})"
+                            except (ValueError, TypeError):
+                                pass
+                    else:
+                        bd_str = "次3走: 未出走"
+
+                    line2 = f"<span style='font-size: 0.88em; color: #64748b;'>{bd_str}</span>"
+                    
+                    cell_html = f"<div style='line-height: 1.3;'><div>{line1}</div><div>{line2}</div></div>"
                     
                     p_cond = row.get('cond_code_youngest', None)
                     p_grade = row.get('grade_code', None)

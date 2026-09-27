@@ -20,6 +20,26 @@ def parse_running_time(t_str):
     ms = int(t[3])
     return m * 60 + s + ms * 0.1
 
+def get_rank_8(score):
+    if score is None:
+        return 'C'
+    if score >= 72.0:
+        return 'S'
+    elif score >= 66.0:
+        return 'A+'
+    elif score >= 60.0:
+        return 'A'
+    elif score >= 54.0:
+        return 'B+'
+    elif score >= 48.0:
+        return 'B'
+    elif score >= 42.0:
+        return 'C+'
+    elif score >= 36.0:
+        return 'C'
+    else:
+        return 'D'
+
 def get_class_info(cond_code, grade_code, course_code=None):
     cond = str(cond_code).strip() if cond_code is not None else ''
     grade = str(grade_code).strip() if grade_code is not None else ''
@@ -65,6 +85,7 @@ def get_class_info(cond_code, grade_code, course_code=None):
 
 @st.cache_data(show_spinner=False)
 def load_past_races_for_horses(horse_id_list, current_race_date, db_path='C:/Ugaura/sqlite/jra_race.db'):
+    # Cache version: 2026-09-27 14:06 (Top 5 average time diff)
     horse_id_list = list(horse_id_list)
     if not horse_id_list:
         return pd.DataFrame()
@@ -89,6 +110,7 @@ def load_past_races_for_horses(horse_id_list, current_race_date, db_path='C:/Uga
             hri.final_order,
             hri.running_time AS race_time,
             hri.lap_time_back_3f AS last_3f,
+            hri.time_diff,
             ucv.ucv_score,
             u3f.ucv_3f_score,
             ROW_NUMBER() OVER (
@@ -165,246 +187,50 @@ def load_past_races_for_horses(horse_id_list, current_race_date, db_path='C:/Uga
     race_time_stats = {}
     if not all_times_df.empty:
         for p_id, p_group in all_times_df.groupby('past_race_id'):
-            times = []
+            top5_times = []
             winner_t = None
             for _, r in p_group.iterrows():
                 t_sec = parse_running_time(r['running_time'])
                 if t_sec is not None:
-                    times.append(t_sec)
                     order_str = str(r['final_order']).strip()
-                    if order_str.isdigit() and int(order_str) == 1:
-                        if winner_t is None or t_sec < winner_t:
-                            winner_t = t_sec
-            if times:
-                if winner_t is None:
-                    winner_t = min(times)
-                count = len(times)
-                if count >= 5:
-                    t_base = float(trim_mean(times, 0.10))
-                else:
-                    t_base = float(np.mean(times))
-                race_time_stats[str(p_id)] = {'winner_time': winner_t, 'base_time': t_base}
+                    if order_str.isdigit():
+                        ord_i = int(order_str)
+                        if ord_i == 1:
+                            if winner_t is None or t_sec < winner_t:
+                                winner_t = t_sec
+                        if 1 <= ord_i <= 5:
+                            top5_times.append(t_sec)
+            
+            top5_avg = float(np.mean(top5_times)) if top5_times else winner_t
+            race_time_stats[str(p_id)] = {'top5_avg_time': top5_avg, 'winner_time': winner_t}
 
-    # 2. 過去走レース出走各馬の直前走（前走）成績集計
-    query_pre_races = f"""
-    WITH target_past_races AS (
-        SELECT DISTINCT 
-            (rd.year || rd.month_day || rd.course_code || rd.times || rd.day || rd.race_number) AS past_race_id,
-            rd.year || '-' || substr(rd.month_day, 1, 2) || '-' || substr(rd.month_day, 3, 2) AS past_race_date,
-            rd.cond_code_youngest AS past_cond,
-            rd.grade_code AS past_grade,
-            rd.course_code AS past_course
-        FROM race_detail rd
-        WHERE (rd.year || rd.month_day || rd.course_code || rd.times || rd.day || rd.race_number) IN ({past_placeholders})
-    ),
-    past_race_horses AS (
+    # 2. 新設 race_level テーブルからのレースレベル指標取得
+    race_level_map = {}
+    try:
+        query_race_level = f"""
         SELECT 
-            tpr.past_race_id,
-            tpr.past_race_date,
-            tpr.past_cond,
-            tpr.past_grade,
-            tpr.past_course,
-            hri.blood_reg_number AS horse_id
-        FROM target_past_races tpr
-        JOIN horse_race_info hri 
-            ON tpr.past_race_id = (hri.year || hri.month_day || hri.course_code || hri.times || hri.day || hri.race_number)
-        WHERE hri.abnormality_code IN ('0', '7')
-          AND hri.horse_number != '00'
-    ),
-    horses_prev_races AS (
-        SELECT 
-            prh.past_race_id,
-            prh.horse_id,
-            prh.past_cond,
-            prh.past_grade,
-            prh.past_course,
-            hri.final_order AS prev_order,
-            rd.cond_code_youngest AS prev_cond,
-            rd.grade_code AS prev_grade,
-            rd.course_code AS prev_course,
-            ROW_NUMBER() OVER (
-                PARTITION BY prh.past_race_id, prh.horse_id
-                ORDER BY rd.year DESC, rd.month_day DESC, rd.race_number DESC
-            ) AS rn
-        FROM past_race_horses prh
-        JOIN horse_race_info hri ON prh.horse_id = hri.blood_reg_number
-        JOIN race_detail rd 
-            ON rd.year = hri.year AND rd.month_day = hri.month_day AND rd.course_code = hri.course_code 
-            AND rd.times = hri.times AND rd.day = hri.day AND rd.race_number = hri.race_number
-        WHERE (rd.year || '-' || substr(rd.month_day, 1, 2) || '-' || substr(rd.month_day, 3, 2)) < prh.past_race_date
-          AND hri.abnormality_code IN ('0', '7')
-          AND hri.running_time != '0000'
-    )
-    SELECT 
-        past_race_id,
-        horse_id,
-        past_cond,
-        past_grade,
-        past_course,
-        prev_order,
-        prev_cond,
-        prev_grade,
-        prev_course
-    FROM horses_prev_races
-    WHERE rn = 1;
-    """
-    pre_df = pd.read_sql(query_pre_races, conn, params=list(unique_past_ids))
+            race_id,
+            pre_level_score,
+            pre_level_rank,
+            post_level_score,
+            post_level_rank,
+            current_level_score,
+            current_level_rank,
+            next3_total_runs,
+            next3_wins,
+            next3_2nd,
+            next3_3rd,
+            winner_next_order
+        FROM race_level
+        WHERE race_id IN ({past_placeholders});
+        """
+        rl_df = pd.read_sql(query_race_level, conn, params=list(unique_past_ids))
+        if not rl_df.empty:
+            race_level_map = rl_df.set_index('race_id').to_dict(orient='index')
+    except Exception:
+        race_level_map = {}
 
-    pre_stats_map = {}
-    if not pre_df.empty:
-        for past_id, group in pre_df.groupby('past_race_id'):
-            same_2nd = 0
-            same_3rd = 0
-            lower_1st = 0
-            for _, r in group.iterrows():
-                curr_rank, _ = get_class_info(r['past_cond'], r['past_grade'], r['past_course'])
-                prev_rank, _ = get_class_info(r['prev_cond'], r['prev_grade'], r['prev_course'])
-                
-                p_order_str = str(r['prev_order']).strip()
-                if p_order_str.isdigit():
-                    p_order = int(p_order_str)
-                    if prev_rank == curr_rank:
-                        if p_order == 2:
-                            same_2nd += 1
-                        elif p_order == 3:
-                            same_3rd += 1
-                    elif prev_rank < curr_rank and p_order == 1:
-                        lower_1st += 1
-                        
-            pl_score = (same_2nd * 1) + (same_3rd * 1) + (lower_1st * 1)
-            pre_stats_map[str(past_id)] = {
-                'pl_score': pl_score,
-                'same_2nd': same_2nd,
-                'same_3rd': same_3rd,
-                'lower_1st': lower_1st,
-                'pre_breakdown_str': f"({same_2nd}-{same_3rd}-{lower_1st})"
-            }
-
-    # 3. 過去走レース出走各馬の次走成績集計
-    query_next_races = f"""
-    WITH target_past_races AS (
-        SELECT DISTINCT 
-            (rd.year || rd.month_day || rd.course_code || rd.times || rd.day || rd.race_number) AS past_race_id,
-            rd.year || '-' || substr(rd.month_day, 1, 2) || '-' || substr(rd.month_day, 3, 2) AS past_race_date
-        FROM race_detail rd
-        WHERE (rd.year || rd.month_day || rd.course_code || rd.times || rd.day || rd.race_number) IN ({past_placeholders})
-    ),
-    past_race_horses AS (
-        SELECT 
-            tpr.past_race_id,
-            tpr.past_race_date,
-            hri.blood_reg_number AS horse_id
-        FROM target_past_races tpr
-        JOIN horse_race_info hri 
-            ON tpr.past_race_id = (hri.year || hri.month_day || hri.course_code || hri.times || hri.day || hri.race_number)
-        WHERE hri.abnormality_code IN ('0', '7')
-          AND hri.horse_number != '00'
-    ),
-    next_races AS (
-        SELECT 
-            prh.past_race_id,
-            prh.horse_id,
-            hri.final_order,
-            ROW_NUMBER() OVER (
-                PARTITION BY prh.past_race_id, prh.horse_id
-                ORDER BY rd.year ASC, rd.month_day ASC, rd.race_number ASC
-            ) AS rn
-        FROM past_race_horses prh
-        JOIN horse_race_info hri ON prh.horse_id = hri.blood_reg_number
-        JOIN race_detail rd 
-            ON rd.year = hri.year AND rd.month_day = hri.month_day AND rd.course_code = hri.course_code 
-            AND rd.times = hri.times AND rd.day = hri.day AND rd.race_number = hri.race_number
-        WHERE (rd.year || '-' || substr(rd.month_day, 1, 2) || '-' || substr(rd.month_day, 3, 2)) > prh.past_race_date
-          AND (rd.year || '-' || substr(rd.month_day, 1, 2) || '-' || substr(rd.month_day, 3, 2)) < ?
-          AND hri.abnormality_code IN ('0', '7')
-          AND hri.running_time != '0000'
-    )
-    SELECT 
-        past_race_id,
-        horse_id,
-        CASE WHEN CAST(final_order AS INTEGER) = 1 THEN 1 ELSE 0 END AS self_next_1st,
-        CASE WHEN CAST(final_order AS INTEGER) = 2 THEN 1 ELSE 0 END AS self_next_2nd,
-        CASE WHEN CAST(final_order AS INTEGER) = 3 THEN 1 ELSE 0 END AS self_next_3rd
-    FROM next_races
-    WHERE rn = 1;
-    """
-    
-    next_df = pd.read_sql(query_next_races, conn, params=list(unique_past_ids) + [current_race_date])
-
-    query_winner_next = f"""
-    WITH target_past_races AS (
-        SELECT DISTINCT 
-            (rd.year || rd.month_day || rd.course_code || rd.times || rd.day || rd.race_number) AS past_race_id,
-            rd.year || '-' || substr(rd.month_day, 1, 2) || '-' || substr(rd.month_day, 3, 2) AS past_race_date
-        FROM race_detail rd
-        WHERE (rd.year || rd.month_day || rd.course_code || rd.times || rd.day || rd.race_number) IN ({past_placeholders})
-    ),
-    past_winners AS (
-        SELECT 
-            tpr.past_race_id,
-            tpr.past_race_date,
-            hri.blood_reg_number AS winner_horse_id
-        FROM target_past_races tpr
-        JOIN horse_race_info hri 
-            ON tpr.past_race_id = (hri.year || hri.month_day || hri.course_code || hri.times || hri.day || hri.race_number)
-        WHERE hri.abnormality_code IN ('0', '7')
-          AND CAST(hri.final_order AS INTEGER) = 1
-    ),
-    winner_next_races AS (
-        SELECT 
-            pw.past_race_id,
-            pw.winner_horse_id,
-            hri.final_order AS winner_next_order,
-            ROW_NUMBER() OVER (
-                PARTITION BY pw.past_race_id, pw.winner_horse_id
-                ORDER BY rd.year ASC, rd.month_day ASC, rd.race_number ASC
-            ) AS rn
-        FROM past_winners pw
-        JOIN horse_race_info hri ON pw.winner_horse_id = hri.blood_reg_number
-        JOIN race_detail rd 
-            ON rd.year = hri.year AND rd.month_day = hri.month_day AND rd.course_code = hri.course_code 
-            AND rd.times = hri.times AND rd.day = hri.day AND rd.race_number = hri.race_number
-        WHERE (rd.year || '-' || substr(rd.month_day, 1, 2) || '-' || substr(rd.month_day, 3, 2)) > pw.past_race_date
-          AND (rd.year || '-' || substr(rd.month_day, 1, 2) || '-' || substr(rd.month_day, 3, 2)) < ?
-          AND hri.abnormality_code IN ('0', '7')
-          AND hri.running_time != '0000'
-    )
-    SELECT 
-        past_race_id,
-        winner_horse_id,
-        winner_next_order
-    FROM winner_next_races
-    WHERE rn = 1;
-    """
-
-    winner_next_df = pd.read_sql(query_winner_next, conn, params=list(unique_past_ids) + [current_race_date])
     conn.close()
-    winner_next_map = {}
-    if not winner_next_df.empty:
-        for _, w_row in winner_next_df.iterrows():
-            p_id = str(w_row['past_race_id'])
-            order_str = str(w_row['winner_next_order']).strip()
-            if order_str.isdigit():
-                o_int = int(order_str)
-                if 1 <= o_int <= 3:
-                    winner_next_map[p_id] = str(o_int)
-                else:
-                    winner_next_map[p_id] = '*'
-            else:
-                winner_next_map[p_id] = '*'
-
-    df['winner_next_order_code'] = df['past_race_id'].astype(str).map(lambda x: winner_next_map.get(x, '*'))
-
-    winner_pts_map = {'1': 5, '2': 3, '3': 2}
-
-    total_by_race = {}
-    if not next_df.empty:
-        total_by_race = next_df.groupby('past_race_id').agg(
-            total_1st=('self_next_1st', 'sum'),
-            total_2nd=('self_next_2nd', 'sum'),
-            total_3rd=('self_next_3rd', 'sum'),
-            total_next_ran=('self_next_1st', 'count')
-        ).to_dict(orient='index')
 
     other_1st_counts = []
     other_2nd_counts = []
@@ -419,34 +245,105 @@ def load_past_races_for_horses(horse_id_list, current_race_date, db_path='C:/Uga
     pre_breakdowns = []
     next_breakdowns = []
 
+    rl_pre_scores = []
+    rl_pre_ranks = []
+    rl_post_scores = []
+    rl_post_ranks = []
+    rl_current_scores = []
+    rl_current_ranks = []
+    rl_next3_totals = []
+    rl_next3_wins = []
+    rl_next3_2nds = []
+    rl_next3_3rds = []
+    rl_winner_nexts = []
+    diff_secs = []
+    rl_perf_scores = []
+    rl_perf_ranks = []
+    rl_perf_adjs = []
+
     for _, row in df.iterrows():
         p_id = str(row['past_race_id'])
-        w_code = str(row['winner_next_order_code'])
         
-        race_stats = total_by_race.get(p_id, {'total_1st': 0, 'total_2nd': 0, 'total_3rd': 0, 'total_next_ran': 0})
-        total_1st = race_stats['total_1st']
-        total_2nd = race_stats['total_2nd']
-        total_3rd = race_stats['total_3rd']
-        total_ran = race_stats['total_next_ran']
-        
-        w_pts = winner_pts_map.get(w_code, 0)
-        l_score = w_pts + (total_1st * 3) + ((total_2nd + total_3rd) * 1)
-        
-        if l_score >= 10:
-            rank = 'S'
-        elif l_score >= 6:
-            rank = 'A'
-        elif l_score >= 3:
-            rank = 'B'
-        else:
-            rank = 'C'
+        # 新設 race_level 指標の参照
+        rl_info = race_level_map.get(p_id, None)
+        if rl_info:
+            pre_s = rl_info.get('pre_level_score')
+            pre_r = rl_info.get('pre_level_rank')
+            p_score = rl_info.get('post_level_score')
+            p_rank = rl_info.get('post_level_rank')
+            c_score = rl_info.get('current_level_score')
+            c_rank = rl_info.get('current_level_rank')
+            n3_tot = rl_info.get('next3_total_runs', 0)
+            n3_w = rl_info.get('next3_wins', 0)
+            n3_2 = rl_info.get('next3_2nd', 0)
+            n3_3 = rl_info.get('next3_3rd', 0)
+            w_next = rl_info.get('winner_next_order')
 
-        # タイム差および実力P値の算出
+            rl_pre_scores.append(pre_s)
+            rl_pre_ranks.append(pre_r)
+            rl_post_scores.append(p_score)
+            rl_post_ranks.append(p_rank)
+            rl_current_scores.append(c_score)
+            rl_current_ranks.append(c_rank)
+            rl_next3_totals.append(n3_tot)
+            rl_next3_wins.append(n3_w)
+            rl_next3_2nds.append(n3_2)
+            rl_next3_3rds.append(n3_3)
+            rl_winner_nexts.append(w_next)
+
+            l_score = int(p_score) if p_score is not None else 0
+            rank = p_rank if p_rank is not None else 'C'
+            w_code = str(w_next) if (w_next is not None and str(w_next).isdigit()) else '*'
+            next_bd_str = f"({w_code}-{n3_w}-{n3_2}-{n3_3}-{n3_tot})"
+            total_1st = n3_w
+            total_2nd = n3_2
+            total_3rd = n3_3
+            total_ran = n3_tot
+        else:
+            rl_pre_scores.append(None)
+            rl_pre_ranks.append(None)
+            rl_post_scores.append(None)
+            rl_post_ranks.append(None)
+            rl_current_scores.append(None)
+            rl_current_ranks.append(None)
+            rl_next3_totals.append(0)
+            rl_next3_wins.append(0)
+            rl_next3_2nds.append(0)
+            rl_next3_3rds.append(0)
+            rl_winner_nexts.append(None)
+
+            l_score = 0
+            rank = 'C'
+            w_code = '*'
+            next_bd_str = "(*-0-0-0-0)"
+            total_1st = 0
+            total_2nd = 0
+            total_3rd = 0
+            total_ran = 0
+
+        # 1〜5着馬平均タイムとの差および実力P値の算出
+        order_str = str(row.get('final_order', '')).strip()
+        order_int = int(order_str) if order_str.isdigit() else None
+
         t_stats = race_time_stats.get(p_id, {})
+        top5_avg = t_stats.get('top5_avg_time', None)
         winner_t = t_stats.get('winner_time', None)
         self_t = parse_running_time(row.get('race_time', ''))
-        
-        if self_t is not None and winner_t is not None:
+
+        td_str = ""
+        diff_sec = None
+
+        if self_t is not None and top5_avg is not None:
+            # 1〜5着平均タイムとの差: 平均より速い場合はマイナス、遅い場合はプラス
+            diff_sec = self_t - top5_avg
+            if abs(diff_sec) < 0.05:
+                td_str = "±0.0"
+            elif diff_sec < 0:
+                td_str = f"{diff_sec:.1f}"
+            else:
+                td_str = f"+{diff_sec:.1f}"
+        elif self_t is not None and winner_t is not None:
+            # フォールバック (勝ち馬との差)
             diff_sec = self_t - winner_t
             if abs(diff_sec) < 0.05:
                 td_str = "±0.0"
@@ -454,22 +351,36 @@ def load_past_races_for_horses(horse_id_list, current_race_date, db_path='C:/Uga
                 td_str = f"+{diff_sec:.1f}"
             else:
                 td_str = f"{diff_sec:.1f}"
-            
-            k = max(0.0, min(1.0, 1.0 - diff_sec))
-            p_score = round(l_score * k, 1)
+
+        effective_diff = max(0.0, diff_sec) if diff_sec is not None else 0.0
+        k = max(0.0, min(1.0, 1.0 - effective_diff))
+        perf_p = round(l_score * k, 1)
+
+        # 自馬パフォーマンス値（perf_score）の算出
+        # レースレベル（p_score または c_score）に対して、上位5頭平均差（diff_sec）を加算・減算
+        rl_base = p_score if p_score is not None else c_score
+        if rl_base is not None and diff_sec is not None:
+            # 1秒差 ≒ 約8.0点換算。不利・大敗時の過剰減点を防ぐため adj を [-12.0, +8.0] にクリッピング
+            adj = max(-12.0, min(8.0, -(diff_sec * 8.0)))
+            p_val = round(max(0.0, min(100.0, rl_base + adj)), 1)
+            p_adj = round(adj, 1)
+        elif rl_base is not None:
+            p_val = round(rl_base, 1)
+            p_adj = 0.0
         else:
-            td_str = ""
-            p_score = 0.0
+            p_val = None
+            p_adj = 0.0
 
-        # 前走着度数
-        pre_info = pre_stats_map.get(p_id, {'pl_score': 0, 'same_2nd': 0, 'same_3rd': 0, 'lower_1st': 0, 'pre_breakdown_str': '(0-0-0)'})
-        pl_scores.append(pre_info['pl_score'])
-        pre_breakdowns.append(pre_info['pre_breakdown_str'])
+        p_rnk = get_rank_8(p_val) if p_val is not None else None
 
-        # 次走着度数: (1着馬の次走着順-次走2着数-次走3着数-次走頭数)
-        next_bd_str = f"({w_code}-{total_1st}-{total_2nd}-{total_3rd}-{total_ran})"
+        diff_secs.append(diff_sec)
+        rl_perf_scores.append(p_val)
+        rl_perf_ranks.append(p_rnk)
+        rl_perf_adjs.append(p_adj)
+
+        pl_scores.append(0)
+        pre_breakdowns.append('(0-0-0)')
         next_breakdowns.append(next_bd_str)
-
         other_1st_counts.append(total_1st)
         other_2nd_counts.append(total_2nd)
         other_3rd_counts.append(total_3rd)
@@ -478,7 +389,7 @@ def load_past_races_for_horses(horse_id_list, current_race_date, db_path='C:/Uga
         race_level_scores.append(l_score)
         race_level_ranks.append(rank)
         time_diff_strs.append(td_str)
-        perf_scores.append(p_score)
+        perf_scores.append(perf_p)
 
     df['other_next_1st_count'] = other_1st_counts
     df['other_next_2nd_count'] = other_2nd_counts
@@ -492,5 +403,21 @@ def load_past_races_for_horses(horse_id_list, current_race_date, db_path='C:/Uga
     df['pl_score'] = pl_scores
     df['pre_breakdown_str'] = pre_breakdowns
     df['next_breakdown_str'] = next_breakdowns
+
+    df['rl_pre_score'] = rl_pre_scores
+    df['rl_pre_rank'] = rl_pre_ranks
+    df['rl_post_score'] = rl_post_scores
+    df['rl_post_rank'] = rl_post_ranks
+    df['rl_current_score'] = rl_current_scores
+    df['rl_current_rank'] = rl_current_ranks
+    df['rl_next3_total'] = rl_next3_totals
+    df['rl_next3_wins'] = rl_next3_wins
+    df['rl_next3_2nd'] = rl_next3_2nds
+    df['rl_next3_3rd'] = rl_next3_3rds
+    df['rl_winner_next'] = rl_winner_nexts
+    df['winner_time_diff_sec'] = diff_secs
+    df['rl_perf_score'] = rl_perf_scores
+    df['rl_perf_rank'] = rl_perf_ranks
+    df['rl_perf_adj'] = rl_perf_adjs
 
     return df
