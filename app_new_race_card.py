@@ -318,7 +318,7 @@ def render_standard_card(target_race_df, selected_date, target_rank, target_clas
                             else:
                                 badge_title += f" ｜ 今回比: {diff:+.1f}点 (同水準)"
 
-                        badge_html = f"<span title='{badge_title}' style='{b_style} font-weight: bold; padding: 1px 5px; border-radius: 3px; font-size: 0.85em; margin-left: 4px; cursor: help;'>{perf_rank} {perf_score:.0f}</span>"
+                        badge_html = f"<span title='{badge_title}' style='{b_style} font-weight: bold; padding: 1px 5px; border-radius: 3px; font-size: 0.85em; margin-left: 4px; cursor: help;'>{perf_rank} {perf_score:.1f}</span>"
                     else:
                         badge_html = ""
 
