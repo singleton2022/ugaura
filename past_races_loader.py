@@ -85,7 +85,7 @@ def get_class_info(cond_code, grade_code, course_code=None):
 
 @st.cache_data(show_spinner=False)
 def load_past_races_for_horses(horse_id_list, current_race_date, db_path='C:/Ugaura/sqlite/jra_race.db'):
-    # Cache version: 2026-09-27 14:06 (Top 5 average time diff)
+    # Cache version: 2026-09-29 07:56 (Fix local race score leak & reset variables)
     horse_id_list = list(horse_id_list)
     if not horse_id_list:
         return pd.DataFrame()
@@ -264,6 +264,27 @@ def load_past_races_for_horses(horse_id_list, current_race_date, db_path='C:/Uga
     for _, row in df.iterrows():
         p_id = str(row['past_race_id'])
         
+        # 毎回のイテレーションで変数を確実に初期化（地方競馬・対象外レースでの持ち越しを完全防止）
+        pre_s = None
+        pre_r = None
+        p_score = None
+        p_rank = None
+        c_score = None
+        c_rank = None
+        n3_tot = 0
+        n3_w = 0
+        n3_2 = 0
+        n3_3 = 0
+        w_next = None
+        l_score = 0
+        rank = 'C'
+        w_code = '*'
+        next_bd_str = "(*-0-0-0-0)"
+        total_1st = 0
+        total_2nd = 0
+        total_3rd = 0
+        total_ran = 0
+
         # 新設 race_level 指標の参照
         rl_info = race_level_map.get(p_id, None)
         if rl_info:
