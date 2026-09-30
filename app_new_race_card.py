@@ -237,8 +237,8 @@ def render_header_and_legend(target_race_df, selected_date, legend_html):
 
 def render_standard_card(target_race_df, selected_date, target_rank, target_class_name):
     legend_html = """<div>
-        <span style="font-weight: bold; color: #38bdf8;">💡 過去5走（自馬パフォーマンス表示）:</span><br>
-        <span style="color: #f1f5f9;">【上段】自馬着順(上位5頭平均差) ｜ <span style="background-color: #dc2626; color: #fff; padding: 1px 4px; border-radius: 3px; font-weight: bold;">S</span>〜<span style="background-color: #94a3b8; color: #fff; padding: 1px 4px; border-radius: 3px; font-weight: bold;">D</span> 自馬パフォーマンス [ランク スコア] <span style="color: #94a3b8; font-size: 0.88em;">(※レースレベルに上位5頭平均差を加算・減算)</span></span><br>
+        <span style="font-weight: bold; color: #38bdf8;">💡 過去5走（実走スコア表示）:</span><br>
+        <span style="color: #f1f5f9;">【上段】自馬着順(上位5頭平均差) ｜ <span style="background-color: #dc2626; color: #fff; padding: 1px 4px; border-radius: 3px; font-weight: bold;">S</span>〜<span style="background-color: #94a3b8; color: #fff; padding: 1px 4px; border-radius: 3px; font-weight: bold;">D</span> 実走スコア [ランク スコア] <span style="color: #94a3b8; font-size: 0.88em;">(※レースレベルに上位5頭平均差を加算・減算)</span></span><br>
         <span style="color: #f1f5f9;">【下段】出走各馬の次3走成績 (1着数-2着数-3着数 / 走数) [勝馬次走]</span>
     </div>"""
     
@@ -279,7 +279,7 @@ def render_standard_card(target_race_df, selected_date, target_rank, target_clas
                         rl_score = row.get('rl_current_score')
                         rl_rank = row.get('rl_current_rank')
 
-                    # 自馬パフォーマンス値 (レースレベルに上位5頭平均差を加算・減算した実質能力値)
+                    # 実走スコア (レースレベルに上位5頭平均差を加算・減算した実質能力値)
                     perf_score = row.get('rl_perf_score')
                     perf_rank = row.get('rl_perf_rank')
                     perf_adj = row.get('rl_perf_adj', 0.0)
@@ -304,7 +304,7 @@ def render_standard_card(target_race_df, selected_date, target_rank, target_clas
 
                     if pd.notna(perf_rank) and perf_rank in rank_badge_styles and pd.notna(perf_score):
                         b_style = rank_badge_styles[perf_rank]
-                        badge_title = f"自馬パフォーマンス: {perf_rank} {perf_score:.1f}"
+                        badge_title = f"実走スコア: {perf_rank} {perf_score:.1f}"
                         if pd.notna(rl_score):
                             badge_title += f" ｜ 元レースレベル: {rl_rank} {rl_score:.1f} (タイム補正: {perf_adj:+.1f}点)"
                         if pd.notna(pre_s):

@@ -85,7 +85,7 @@ def get_class_info(cond_code, grade_code, course_code=None):
 
 @st.cache_data(show_spinner=False)
 def load_past_races_for_horses(horse_id_list, current_race_date, db_path='C:/Ugaura/sqlite/jra_race.db'):
-    # Cache version: 2026-09-29 07:56 (Fix local race score leak & reset variables)
+    # Cache version: 2026-10-01 07:45 (Rename to 実走スコア)
     horse_id_list = list(horse_id_list)
     if not horse_id_list:
         return pd.DataFrame()
@@ -377,7 +377,7 @@ def load_past_races_for_horses(horse_id_list, current_race_date, db_path='C:/Uga
         k = max(0.0, min(1.0, 1.0 - effective_diff))
         perf_p = round(l_score * k, 1)
 
-        # 自馬パフォーマンス値（perf_score）の算出
+        # 実走スコア（perf_score）の算出
         # レースレベル（p_score または c_score）に対して、上位5頭平均差（diff_sec）を加算・減算
         rl_base = p_score if p_score is not None else c_score
         if rl_base is not None and diff_sec is not None:

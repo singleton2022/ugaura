@@ -28,7 +28,7 @@
 - realtime_predict.py: 最新DBから出走除外馬の勝率再分配、トラックバイアス検出、EV判定を行い、購入推奨馬を出力。
 - app_new_race_card.py: Streamlit による Web出馬表（標準出馬表 / 分析出馬表）。
 - fast_loader.py: Streamlit アプリ用のオンデマンド高速データローダー。
-- past_races_loader.py: 出馬表向けの過去走（直近5走）取得および自馬パフォーマンス値（上位5頭平均差補正）算出。
+- past_races_loader.py: 出馬表向けの過去走（直近5走）取得および実走スコア（上位5頭平均差補正）算出。
 - Plan/: 過去の設計計画書、技術改善レポート等の資料群（Plan/race_level_specification.md にレースレベル詳細仕様）。
 - cushion/: 芝クッション値・ダート含水率のスクレイピング・更新ツール群。
 
