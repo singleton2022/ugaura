@@ -1,4 +1,5 @@
 import sqlite3
+import duckdb
 import pandas as pd
 import numpy as np
 import streamlit as st
@@ -83,9 +84,208 @@ def get_class_info(cond_code, grade_code, course_code=None):
 
     return 3.0, '一般'
 
+def load_race_level_snapshot_map(unique_past_ids, current_race_date, db_path='C:/Ugaura/sqlite/jra_race.db'):
+    """
+    指定された過去走IDリストについて、current_race_date（対象レース開催日）時点での
+    レースレベルおよび次3走成績をDuckDBを用いて時系列集計（スナップショット）し、辞書マップとして返す。
+    """
+    if not unique_past_ids:
+        return {}
+
+    class_base_sql = """
+        CASE 
+            WHEN rd.race_type_code = '11' THEN
+                CASE 
+                    WHEN rd.grade_code = 'A' THEN 63.0
+                    WHEN rd.grade_code IN ('B', 'C') THEN 54.0
+                    WHEN rd.grade_code = 'L' OR rd.cond_code_youngest IN ('000', '999') THEN 49.0
+                    WHEN rd.cond_code_youngest IN ('003', '004', '005') THEN 44.0
+                    WHEN rd.cond_code_youngest IN ('701', '702', '703') THEN 34.0
+                    ELSE 34.0
+                END
+            WHEN rd.race_type_code = '12' THEN
+                CASE 
+                    WHEN rd.grade_code = 'A' THEN 72.0
+                    WHEN rd.grade_code IN ('B', 'C') THEN 63.5
+                    WHEN rd.grade_code = 'L' OR rd.cond_code_youngest IN ('000', '999') THEN 58.0
+                    WHEN rd.cond_code_youngest IN ('007', '008', '009', '010') THEN 55.5
+                    WHEN rd.cond_code_youngest IN ('003', '004', '005') THEN 48.5
+                    WHEN rd.cond_code_youngest IN ('701', '702', '703') THEN 38.0
+                    ELSE 38.0
+                END
+            ELSE
+                CASE 
+                    WHEN rd.grade_code = 'A' THEN 77.0
+                    WHEN rd.grade_code IN ('B', 'C') THEN 71.5
+                    WHEN rd.cond_code_youngest IN ('000', '999') OR rd.grade_code = 'L' THEN 67.0
+                    WHEN rd.cond_code_youngest IN ('014', '015', '016') THEN 62.5
+                    WHEN rd.cond_code_youngest IN ('007', '008', '009', '010') THEN 56.5
+                    WHEN rd.cond_code_youngest IN ('003', '004', '005') THEN 50.0
+                    WHEN rd.cond_code_youngest IN ('701', '702', '703') THEN 38.0
+                    ELSE 50.0
+                END
+        END
+    """
+
+    try:
+        con = duckdb.connect()
+        con.execute(f"ATTACH DATABASE '{db_path}' AS jra (TYPE SQLITE);")
+        
+        # 過去走リストテーブル作成
+        df_target = pd.DataFrame({'past_race_id': [str(pid) for pid in unique_past_ids]})
+        con.register('df_target_past_races', df_target)
+
+        query = f"""
+        WITH target_past_races AS (
+            SELECT DISTINCT past_race_id FROM df_target_past_races
+        ),
+        past_race_details AS (
+            SELECT 
+                t.past_race_id,
+                rd.year || '-' || substr(rd.month_day, 1, 2) || '-' || substr(rd.month_day, 3, 2) AS past_race_date,
+                {class_base_sql} AS class_base_score
+            FROM target_past_races t
+            JOIN jra.race_detail rd
+              ON t.past_race_id = (rd.year || rd.month_day || rd.course_code || rd.times || rd.day || rd.race_number)
+            WHERE rd.course_code IN ('01','02','03','04','05','06','07','08','09','10')
+        ),
+        past_starters AS (
+            SELECT 
+                prd.past_race_id,
+                prd.past_race_date,
+                prd.class_base_score,
+                hri.blood_reg_number AS horse_id,
+                TRY_CAST(hri.final_order AS INTEGER) AS final_order
+            FROM past_race_details prd
+            JOIN jra.horse_race_info hri 
+              ON prd.past_race_id = (hri.year || hri.month_day || hri.course_code || hri.times || hri.day || hri.race_number)
+            WHERE hri.abnormality_code IN ('0', '7')
+              AND hri.horse_number != '00'
+              AND TRY_CAST(hri.final_order AS INTEGER) > 0
+        ),
+        next_runs AS (
+            SELECT 
+                ps.past_race_id,
+                ps.horse_id,
+                ps.final_order,
+                rd.year || '-' || substr(rd.month_day, 1, 2) || '-' || substr(rd.month_day, 3, 2) AS next_race_date,
+                TRY_CAST(hri.final_order AS INTEGER) AS next_order,
+                CASE 
+                    WHEN hri.time_diff IS NULL OR trim(hri.time_diff) = '' THEN NULL
+                    WHEN starts_with(trim(hri.time_diff), '+') THEN TRY_CAST(substr(trim(hri.time_diff), 2) AS DOUBLE) / 10.0
+                    WHEN starts_with(trim(hri.time_diff), '-') THEN -TRY_CAST(substr(trim(hri.time_diff), 2) AS DOUBLE) / 10.0
+                    ELSE TRY_CAST(trim(hri.time_diff) AS DOUBLE) / 10.0
+                END AS next_time_diff,
+                ROW_NUMBER() OVER (
+                    PARTITION BY ps.past_race_id, ps.horse_id 
+                    ORDER BY rd.year ASC, rd.month_day ASC
+                ) AS next_run_num
+            FROM past_starters ps
+            JOIN jra.horse_race_info hri ON ps.horse_id = hri.blood_reg_number
+            JOIN jra.race_detail rd ON hri.year=rd.year AND hri.month_day=rd.month_day AND hri.course_code=rd.course_code AND hri.times=rd.times AND hri.day=rd.day AND hri.race_number=rd.race_number
+            WHERE rd.course_code IN ('01','02','03','04','05','06','07','08','09','10')
+              AND (rd.year || '-' || substr(rd.month_day, 1, 2) || '-' || substr(rd.month_day, 3, 2)) > ps.past_race_date
+              AND (rd.year || '-' || substr(rd.month_day, 1, 2) || '-' || substr(rd.month_day, 3, 2)) < '{current_race_date}'
+              AND hri.abnormality_code IN ('0', '7')
+              AND TRY_CAST(hri.final_order AS INTEGER) > 0
+        ),
+        valid_next_runs AS (
+            SELECT 
+                past_race_id,
+                horse_id,
+                final_order,
+                next_run_num,
+                next_order,
+                CASE next_run_num
+                    WHEN 1 THEN 1.0
+                    WHEN 2 THEN 0.8
+                    WHEN 3 THEN 0.6
+                    ELSE 0.0
+                END AS weight,
+                LEAST(10.0,
+                    (CASE 
+                        WHEN next_order = 1 THEN 5.5
+                        WHEN next_order = 2 THEN 3.8
+                        WHEN next_order = 3 THEN 2.5
+                        WHEN next_order IN (4, 5) THEN 1.2
+                        WHEN next_order BETWEEN 6 AND 9 THEN 0.4
+                        ELSE 0.0
+                     END)
+                    + (CASE 
+                        WHEN next_time_diff IS NOT NULL AND next_time_diff <= 0.2 THEN 1.5
+                        WHEN next_time_diff IS NOT NULL AND next_time_diff <= 0.5 THEN 0.5
+                        ELSE 0.0
+                       END)
+                    + (CASE WHEN final_order = 1 AND next_order = 1 THEN 2.0 ELSE 0.0 END)
+                ) AS pts
+            FROM next_runs
+            WHERE next_run_num <= 3
+        ),
+        past_race_agg AS (
+            SELECT 
+                past_race_id,
+                COUNT(*) AS next3_total_runs,
+                SUM(CASE WHEN next_order = 1 THEN 1 ELSE 0 END) AS next3_wins,
+                SUM(CASE WHEN next_order = 2 THEN 1 ELSE 0 END) AS next3_2nd,
+                SUM(CASE WHEN next_order = 3 THEN 1 ELSE 0 END) AS next3_3rd,
+                SUM(weight) AS weight_sum,
+                SUM(pts * weight) AS points_sum,
+                MAX(CASE WHEN final_order = 1 AND next_run_num = 1 THEN next_order ELSE NULL END) AS winner_next_order
+            FROM valid_next_runs
+            GROUP BY past_race_id
+        )
+        SELECT 
+            rl.race_id,
+            rl.pre_level_score,
+            rl.pre_level_rank,
+            
+            COALESCE(pra.next3_total_runs, 0) AS next3_total_runs,
+            COALESCE(pra.next3_wins, 0) AS next3_wins,
+            COALESCE(pra.next3_2nd, 0) AS next3_2nd,
+            COALESCE(pra.next3_3rd, 0) AS next3_3rd,
+            pra.winner_next_order,
+            
+            ROUND(
+                LEAST(100.0, GREATEST(0.0,
+                    prd.class_base_score + (((8.0 * 2.1 + COALESCE(pra.points_sum, 0.0)) / (8.0 + COALESCE(pra.weight_sum, 0.0))) - 2.1) * 8.0
+                ))
+            , 1) AS post_level_score,
+
+            ROUND(
+                (1.0 - LEAST(1.0, COALESCE(pra.weight_sum, 0.0) / GREATEST(1.0, rl.starter_count * 1.5))) * rl.pre_level_score
+                + LEAST(1.0, COALESCE(pra.weight_sum, 0.0) / GREATEST(1.0, rl.starter_count * 1.5)) * 
+                  LEAST(100.0, GREATEST(0.0, prd.class_base_score + (((8.0 * 2.1 + COALESCE(pra.points_sum, 0.0)) / (8.0 + COALESCE(pra.weight_sum, 0.0))) - 2.1) * 8.0))
+            , 1) AS current_level_score
+
+        FROM jra.race_level rl
+        JOIN past_race_details prd ON rl.race_id = prd.past_race_id
+        LEFT JOIN past_race_agg pra ON rl.race_id = pra.past_race_id;
+        """
+        snap_df = con.execute(query).fetchdf()
+        con.close()
+
+        if snap_df.empty:
+            return {}
+
+        snap_df['post_level_rank'] = snap_df['post_level_score'].map(get_rank_8)
+        snap_df['current_level_rank'] = snap_df['current_level_score'].map(get_rank_8)
+
+        return snap_df.set_index('race_id').to_dict(orient='index')
+
+    except Exception:
+        # 万が一のエラー時はSQLiteの確定テーブルへフォールバック
+        conn = sqlite3.connect(db_path)
+        placeholders = ','.join(['?'] * len(unique_past_ids))
+        q = f"SELECT * FROM race_level WHERE race_id IN ({placeholders})"
+        df_fb = pd.read_sql(q, conn, params=list(unique_past_ids))
+        conn.close()
+        if not df_fb.empty:
+            return df_fb.set_index('race_id').to_dict(orient='index')
+        return {}
+
 @st.cache_data(show_spinner=False)
 def load_past_races_for_horses(horse_id_list, current_race_date, db_path='C:/Ugaura/sqlite/jra_race.db'):
-    # Cache version: 2026-10-01 07:45 (Rename to 実走スコア)
+    # Cache version: 2026-10-01 08:00 (Point-in-Time Snapshot by current_race_date)
     horse_id_list = list(horse_id_list)
     if not horse_id_list:
         return pd.DataFrame()
@@ -204,33 +404,10 @@ def load_past_races_for_horses(horse_id_list, current_race_date, db_path='C:/Uga
             top5_avg = float(np.mean(top5_times)) if top5_times else winner_t
             race_time_stats[str(p_id)] = {'top5_avg_time': top5_avg, 'winner_time': winner_t}
 
-    # 2. 新設 race_level テーブルからのレースレベル指標取得
-    race_level_map = {}
-    try:
-        query_race_level = f"""
-        SELECT 
-            race_id,
-            pre_level_score,
-            pre_level_rank,
-            post_level_score,
-            post_level_rank,
-            current_level_score,
-            current_level_rank,
-            next3_total_runs,
-            next3_wins,
-            next3_2nd,
-            next3_3rd,
-            winner_next_order
-        FROM race_level
-        WHERE race_id IN ({past_placeholders});
-        """
-        rl_df = pd.read_sql(query_race_level, conn, params=list(unique_past_ids))
-        if not rl_df.empty:
-            race_level_map = rl_df.set_index('race_id').to_dict(orient='index')
-    except Exception:
-        race_level_map = {}
-
     conn.close()
+
+    # 2. レースレベル情報 (対象レース開催日時点での時系列スナップショット取得)
+    race_level_map = load_race_level_snapshot_map(unique_past_ids, current_race_date, db_path)
 
     other_1st_counts = []
     other_2nd_counts = []
@@ -378,8 +555,8 @@ def load_past_races_for_horses(horse_id_list, current_race_date, db_path='C:/Uga
         perf_p = round(l_score * k, 1)
 
         # 実走スコア（perf_score）の算出
-        # レースレベル（p_score または c_score）に対して、上位5頭平均差（diff_sec）を加算・減算
-        rl_base = p_score if p_score is not None else c_score
+        # レースレベル（当時時点の総合レベル c_score 優先、無ければ p_score）に対して、上位5頭平均差（diff_sec）を加算・減算
+        rl_base = c_score if c_score is not None else p_score
         if rl_base is not None and diff_sec is not None:
             # 1秒差 ≒ 約8.0点換算。不利・大敗時の過剰減点を防ぐため adj を [-12.0, +8.0] にクリッピング
             adj = max(-12.0, min(8.0, -(diff_sec * 8.0)))

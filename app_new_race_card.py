@@ -272,12 +272,12 @@ def render_standard_card(target_race_df, selected_date, target_rank, target_clas
 
                     td_disp = f"({time_diff_str})" if time_diff_str else ""
                     
-                    # 事後確定レースレベル (Post-Score優先、未出走の場合はCurrent-Score)
-                    rl_score = row.get('rl_post_score')
-                    rl_rank = row.get('rl_post_rank')
+                    # 当時のレースレベル (Current-Score優先、無ければPost-Score)
+                    rl_score = row.get('rl_current_score')
+                    rl_rank = row.get('rl_current_rank')
                     if pd.isna(rl_score) or rl_score is None:
-                        rl_score = row.get('rl_current_score')
-                        rl_rank = row.get('rl_current_rank')
+                        rl_score = row.get('rl_post_score')
+                        rl_rank = row.get('rl_post_rank')
 
                     # 実走スコア (レースレベルに上位5頭平均差を加算・減算した実質能力値)
                     perf_score = row.get('rl_perf_score')
