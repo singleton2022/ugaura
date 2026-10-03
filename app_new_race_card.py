@@ -10,7 +10,11 @@ from analysis_loader import load_horse_analysis_stats
 WEEKDAY_JP = ['月', '火', '水', '木', '金', '土', '日']
 COURSE_MAP = {
     '01': '札幌', '02': '函館', '03': '福島', '04': '新潟', '05': '東京',
-    '06': '中山', '07': '中京', '08': '京都', '09': '阪神', '10': '小倉'
+    '06': '中山', '07': '中京', '08': '京都', '09': '阪神', '10': '小倉',
+    '30': '門別', '35': '盛岡', '36': '水沢',
+    '42': '浦和', '43': '船橋', '44': '大井', '45': '川崎',
+    '46': '金沢', '47': '笠松', '48': '名古屋',
+    '50': '園田', '51': '姫路', '54': '高知', '55': '佐賀'
 }
 
 def format_date_label(d_str):
@@ -40,11 +44,22 @@ def calc_interval_info(recent_date_str, past_date_str):
     except Exception:
         return " ", "text-align: center;"
 
-def get_track_dist_label(track_code, distance):
+def get_track_dist_label(track_code, distance, course_code=None):
     if pd.isna(distance) or not str(distance).strip().isdigit():
         return "", ""
     d_num = int(distance)
     d_hundred = d_num // 100
+    
+    # 競馬場名
+    c_str = str(course_code).strip().zfill(2) if pd.notna(course_code) else ''
+    c_name = COURSE_MAP.get(c_str, '')
+    if not c_name and c_str:
+        try:
+            c_int = int(c_str)
+            if c_int not in range(1, 11):
+                c_name = '地方'
+        except Exception:
+            c_name = '海外'
     
     try:
         t_code_num = int(track_code)
@@ -53,9 +68,18 @@ def get_track_dist_label(track_code, distance):
         is_turf = False
 
     if is_turf:
-        return f"芝{d_hundred}", "color: #2e7d32; font-weight: bold; padding: 2px 4px;"
+        t_color = "#2e7d32"  # 芝 (緑)
+        td_text = f"芝{d_hundred}"
     else:
-        return f"ダ{d_hundred}", "color: #795548; font-weight: bold; padding: 2px 4px;"
+        t_color = "#795548"  # ダート (茶)
+        td_text = f"ダ{d_hundred}"
+
+    if c_name:
+        label_html = f"<div style='line-height: 1.25;'><div style='font-size: 0.88em; color: #334155; font-weight: 500;'>{c_name}</div><div style='color: {t_color}; font-weight: bold;'>{td_text}</div></div>"
+    else:
+        label_html = f"<div style='line-height: 1.25;'><div style='color: {t_color}; font-weight: bold;'>{td_text}</div></div>"
+
+    return label_html, "padding: 3px 2px; text-align: center;"
 
 def get_class_info(cond_code, grade_code, course_code=None):
     cond = str(cond_code).strip() if cond_code is not None else ''
@@ -375,7 +399,7 @@ def render_standard_card(target_race_df, selected_date, target_rank, target_clas
 
                     track_code = row.get('track_code', None)
                     distance = row.get('distance', None)
-                    td_label, td_style = get_track_dist_label(track_code, distance)
+                    td_label, td_style = get_track_dist_label(track_code, distance, p_course)
                     
                     past_5_map[h_id][rn] = {
                         'text': cell_html,
