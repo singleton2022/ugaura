@@ -68,16 +68,16 @@ def get_track_dist_label(track_code, distance, course_code=None):
         is_turf = False
 
     if is_turf:
-        t_color = "#2e7d32"  # 芝 (緑)
+        t_color = "#4ade80"  # 芝: 鮮やかなライトグリーン (黒背景で視認性抜群)
         td_text = f"芝{d_hundred}"
     else:
-        t_color = "#795548"  # ダート (茶)
+        t_color = "#fb923c"  # ダート: 鮮やかなオレンジ・アンバー (黒背景で視認性抜群)
         td_text = f"ダ{d_hundred}"
 
     if c_name:
-        label_html = f"<div style='line-height: 1.25;'><div style='font-size: 0.88em; color: #334155; font-weight: 500;'>{c_name}</div><div style='color: {t_color}; font-weight: bold;'>{td_text}</div></div>"
+        label_html = f"<div style='line-height: 1.25;'><div style='font-size: 0.92em; color: #f8fafc; font-weight: 600;'>{c_name}</div><div style='color: {t_color}; font-weight: bold; font-size: 0.95em;'>{td_text}</div></div>"
     else:
-        label_html = f"<div style='line-height: 1.25;'><div style='color: {t_color}; font-weight: bold;'>{td_text}</div></div>"
+        label_html = f"<div style='line-height: 1.25;'><div style='color: {t_color}; font-weight: bold; font-size: 0.95em;'>{td_text}</div></div>"
 
     return label_html, "padding: 3px 2px; text-align: center;"
 
