@@ -252,16 +252,19 @@ def compute_race_levels(start_year=2015, db_path=DB_PATH):
         LEAD(final_order, 1) OVER w AS next1_order,
         LEAD(time_diff_sec, 1) OVER w AS next1_time_diff,
         LEAD(class_rank, 1) OVER w AS next1_class,
+        LEAD(grade_code, 1) OVER w AS next1_grade,
 
         LEAD(race_id, 2) OVER w AS next2_race_id,
         LEAD(final_order, 2) OVER w AS next2_order,
         LEAD(time_diff_sec, 2) OVER w AS next2_time_diff,
         LEAD(class_rank, 2) OVER w AS next2_class,
+        LEAD(grade_code, 2) OVER w AS next2_grade,
 
         LEAD(race_id, 3) OVER w AS next3_race_id,
         LEAD(final_order, 3) OVER w AS next3_order,
         LEAD(time_diff_sec, 3) OVER w AS next3_time_diff,
-        LEAD(class_rank, 3) OVER w AS next3_class
+        LEAD(class_rank, 3) OVER w AS next3_class,
+        LEAD(grade_code, 3) OVER w AS next3_grade
     FROM finished_runs r
     WINDOW w AS (PARTITION BY horse_id ORDER BY race_date ASC, race_number ASC);
     """)
@@ -281,16 +284,19 @@ def compute_race_levels(start_year=2015, db_path=DB_PATH):
         NULL::INTEGER AS next1_order,
         NULL::DOUBLE AS next1_time_diff,
         NULL::DOUBLE AS next1_class,
+        NULL::TEXT AS next1_grade,
 
         NULL::TEXT AS next2_race_id,
         NULL::INTEGER AS next2_order,
         NULL::DOUBLE AS next2_time_diff,
         NULL::DOUBLE AS next2_class,
+        NULL::TEXT AS next2_grade,
 
         NULL::TEXT AS next3_race_id,
         NULL::INTEGER AS next3_order,
         NULL::DOUBLE AS next3_time_diff,
-        NULL::DOUBLE AS next3_class
+        NULL::DOUBLE AS next3_class,
+        NULL::TEXT AS next3_grade
     FROM upcoming_runs u
     ASOF LEFT JOIN finished_runs f
       ON u.horse_id = f.horse_id AND u.race_date > f.race_date;
@@ -349,7 +355,7 @@ def compute_race_levels(start_year=2015, db_path=DB_PATH):
             ))
         END AS horse_pre_score,
 
-        -- 次走1（重み 1.0）
+        -- 次走1
         CASE 
             WHEN next1_race_id IS NULL OR next1_order IS NULL OR next1_order = 0 THEN NULL
             ELSE LEAST(10.0,
@@ -366,11 +372,19 @@ def compute_race_levels(start_year=2015, db_path=DB_PATH):
                     WHEN next1_time_diff IS NOT NULL AND next1_time_diff <= 0.5 THEN 0.5
                     ELSE 0.0
                    END)
+                -- 上位クラス好走加点
+                + (CASE 
+                    WHEN next1_class > class_rank AND next1_order = 1 THEN
+                        (CASE WHEN next1_class - class_rank >= 1.5 OR next1_grade IN ('A', 'B', 'C') THEN 3.0 ELSE 1.5 END)
+                    WHEN next1_class > class_rank AND next1_order IN (2, 3) THEN
+                        (CASE WHEN next1_class - class_rank >= 1.5 OR next1_grade IN ('A', 'B', 'C') THEN 2.0 ELSE 0.8 END)
+                    ELSE 0.0
+                   END)
                 + (CASE WHEN final_order = 1 AND next1_order = 1 THEN 2.0 ELSE 0.0 END)
             )
         END AS next1_pts,
 
-        -- 次走2（重み 0.8）
+        -- 次走2
         CASE 
             WHEN next2_race_id IS NULL OR next2_order IS NULL OR next2_order = 0 THEN NULL
             ELSE LEAST(10.0,
@@ -387,10 +401,18 @@ def compute_race_levels(start_year=2015, db_path=DB_PATH):
                     WHEN next2_time_diff IS NOT NULL AND next2_time_diff <= 0.5 THEN 0.5
                     ELSE 0.0
                    END)
+                -- 上位クラス好走加点
+                + (CASE 
+                    WHEN next2_class > class_rank AND next2_order = 1 THEN
+                        (CASE WHEN next2_class - class_rank >= 1.5 OR next2_grade IN ('A', 'B', 'C') THEN 3.0 ELSE 1.5 END)
+                    WHEN next2_class > class_rank AND next2_order IN (2, 3) THEN
+                        (CASE WHEN next2_class - class_rank >= 1.5 OR next2_grade IN ('A', 'B', 'C') THEN 2.0 ELSE 0.8 END)
+                    ELSE 0.0
+                   END)
             )
         END AS next2_pts,
 
-        -- 次走3（重み 0.6）
+        -- 次走3
         CASE 
             WHEN next3_race_id IS NULL OR next3_order IS NULL OR next3_order = 0 THEN NULL
             ELSE LEAST(10.0,
@@ -407,56 +429,120 @@ def compute_race_levels(start_year=2015, db_path=DB_PATH):
                     WHEN next3_time_diff IS NOT NULL AND next3_time_diff <= 0.5 THEN 0.5
                     ELSE 0.0
                    END)
+                -- 上位クラス好走加点
+                + (CASE 
+                    WHEN next3_class > class_rank AND next3_order = 1 THEN
+                        (CASE WHEN next3_class - class_rank >= 1.5 OR next3_grade IN ('A', 'B', 'C') THEN 3.0 ELSE 1.5 END)
+                    WHEN next3_class > class_rank AND next3_order IN (2, 3) THEN
+                        (CASE WHEN next3_class - class_rank >= 1.5 OR next3_grade IN ('A', 'B', 'C') THEN 2.0 ELSE 0.8 END)
+                    ELSE 0.0
+                   END)
             )
         END AS next3_pts
 
     FROM horse_history hh;
     """)
 
-    print("Step 4: レース単位の集計とスコアリング...")
+    print("Step 4: 各馬のベスト走抽出（次3走のうち最良成績1走のみ選定）...")
+    con.execute("""
+    CREATE TEMP TABLE horse_next_runs AS
+    SELECT 
+        race_id,
+        year,
+        horse_id,
+        horse_name,
+        horse_number,
+        final_order,
+        horse_pre_score,
+        1 AS run_num,
+        next1_order AS n_order,
+        next1_time_diff AS n_time_diff,
+        next1_pts AS pts
+    FROM horse_scores
+    WHERE next1_pts IS NOT NULL
+    UNION ALL
+    SELECT 
+        race_id,
+        year,
+        horse_id,
+        horse_name,
+        horse_number,
+        final_order,
+        horse_pre_score,
+        2 AS run_num,
+        next2_order AS n_order,
+        next2_time_diff AS n_time_diff,
+        next2_pts AS pts
+    FROM horse_scores
+    WHERE next2_pts IS NOT NULL
+    UNION ALL
+    SELECT 
+        race_id,
+        year,
+        horse_id,
+        horse_name,
+        horse_number,
+        final_order,
+        horse_pre_score,
+        3 AS run_num,
+        next3_order AS n_order,
+        next3_time_diff AS n_time_diff,
+        next3_pts AS pts
+    FROM horse_scores
+    WHERE next3_pts IS NOT NULL;
+    """)
+
+    con.execute("""
+    CREATE TEMP TABLE horse_best_runs AS
+    SELECT *
+    FROM horse_next_runs
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY race_id, horse_id 
+        ORDER BY pts DESC, COALESCE(n_time_diff, 99.0) ASC, run_num ASC
+    ) = 1;
+    """)
+
+    print("Step 5: レース単位の集計とスコアリング...")
     con.execute(f"""
     CREATE TEMP TABLE race_level_summary AS
     SELECT 
-        race_id,
-        MAX(CAST(race_date AS TEXT)) AS race_date,
-        MAX(race_name_main) AS race_name,
-        MAX(course_code) AS course_code,
-        MAX(grade_code) AS grade_code,
-        MAX(class_base_score) AS class_base_score,
-        MAX(class_rank) AS class_rank,
-        COUNT(*) AS starter_count,
+        hs.race_id,
+        MAX(CAST(hs.race_date AS TEXT)) AS race_date,
+        MAX(hs.race_name_main) AS race_name,
+        MAX(hs.course_code) AS course_code,
+        MAX(hs.grade_code) AS grade_code,
+        MAX(hs.class_base_score) AS class_base_score,
+        MAX(hs.class_rank) AS class_rank,
+        COUNT(DISTINCT hs.horse_id) AS starter_count,
         
-        AVG(horse_pre_score) AS avg_pre_score,
+        AVG(hs.horse_pre_score) AS avg_pre_score,
         
-        COUNT(next1_pts) + COUNT(next2_pts) + COUNT(next3_pts) AS next3_total_runs,
+        -- 次3走のいずれかを消化したユニーク出走頭数
+        COUNT(hbr.horse_id) AS next3_total_runs,
         
-        SUM(CASE WHEN next1_pts IS NOT NULL AND next1_order = 1 THEN 1 ELSE 0 END) +
-        SUM(CASE WHEN next2_pts IS NOT NULL AND next2_order = 1 THEN 1 ELSE 0 END) +
-        SUM(CASE WHEN next3_pts IS NOT NULL AND next3_order = 1 THEN 1 ELSE 0 END) AS next3_wins,
+        -- ベスト走での1着（勝ち上がり頭数）
+        SUM(CASE WHEN hbr.n_order = 1 THEN 1 ELSE 0 END) AS next3_wins,
 
-        SUM(CASE WHEN next1_pts IS NOT NULL AND next1_order = 2 THEN 1 ELSE 0 END) +
-        SUM(CASE WHEN next2_pts IS NOT NULL AND next2_order = 2 THEN 1 ELSE 0 END) +
-        SUM(CASE WHEN next3_pts IS NOT NULL AND next3_order = 2 THEN 1 ELSE 0 END) AS next3_2nd,
+        -- ベスト走での2着好走頭数
+        SUM(CASE WHEN hbr.n_order = 2 THEN 1 ELSE 0 END) AS next3_2nd,
 
-        SUM(CASE WHEN next1_pts IS NOT NULL AND next1_order = 3 THEN 1 ELSE 0 END) +
-        SUM(CASE WHEN next2_pts IS NOT NULL AND next2_order = 3 THEN 1 ELSE 0 END) +
-        SUM(CASE WHEN next3_pts IS NOT NULL AND next3_order = 3 THEN 1 ELSE 0 END) AS next3_3rd,
+        -- ベスト走での3着好走頭数
+        SUM(CASE WHEN hbr.n_order = 3 THEN 1 ELSE 0 END) AS next3_3rd,
 
-        SUM(COALESCE(1.0, 0.0) * (CASE WHEN next1_pts IS NOT NULL THEN 1.0 ELSE 0.0 END) +
-            COALESCE(0.8, 0.0) * (CASE WHEN next2_pts IS NOT NULL THEN 1.0 ELSE 0.0 END) +
-            COALESCE(0.6, 0.0) * (CASE WHEN next3_pts IS NOT NULL THEN 1.0 ELSE 0.0 END)
-        ) AS weight_sum,
+        -- 各馬一律重み 1.0
+        COUNT(hbr.horse_id)::DOUBLE AS weight_sum,
 
-        SUM(COALESCE(next1_pts * 1.0, 0.0) +
-            COALESCE(next2_pts * 0.8, 0.0) +
-            COALESCE(next3_pts * 0.6, 0.0)
-        ) AS points_sum,
+        -- ベスト走の獲得ポイント合計
+        COALESCE(SUM(hbr.pts), 0.0) AS points_sum,
 
-        MAX(CASE WHEN final_order = 1 AND next1_order > 0 THEN next1_order ELSE NULL END) AS winner_next_order
+        -- 当該レース1着馬の次走着順
+        MAX(CASE WHEN hs.final_order = 1 AND hs.next1_order > 0 THEN hs.next1_order ELSE NULL END) AS winner_next_order
 
-    FROM horse_scores
-    WHERE CAST(year AS INTEGER) >= {start_year}
-    GROUP BY race_id;
+    FROM horse_scores hs
+    LEFT JOIN horse_best_runs hbr 
+      ON hs.race_id = hbr.race_id AND hs.horse_id = hbr.horse_id
+    WHERE CAST(hs.year AS INTEGER) >= {start_year}
+    GROUP BY hs.race_id;
     """)
 
     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -478,19 +564,19 @@ def compute_race_levels(start_year=2015, db_path=DB_PATH):
             ))
         , 1) AS pre_level_score,
         
-        -- 事後レベル (絶対値化): クラス基準点 + (actual_avg_pts - 2.1) * 8.0
+        -- 事後レベル (絶対値化): クラス基準点 + (actual_avg_pts - 2.7) * 8.0 (prior_mean=2.7, prior_weight=6.0)
         ROUND(
             LEAST(100.0, GREATEST(0.0,
-                class_base_score + (((8.0 * 2.1 + points_sum) / (8.0 + weight_sum)) - 2.1) * 8.0
+                class_base_score + (((6.0 * 2.7 + points_sum) / (6.0 + weight_sum)) - 2.7) * 8.0
             ))
         , 1) AS post_level_score,
 
-        -- 現在総合レベル
+        -- 現在総合レベル (出走頭数の約80%消化で満了移行)
         ROUND(
-            (1.0 - LEAST(1.0, weight_sum / GREATEST(1.0, starter_count * 1.5))) * 
+            (1.0 - LEAST(1.0, weight_sum / GREATEST(1.0, starter_count * 0.8))) * 
             LEAST(100.0, GREATEST(0.0, class_base_score + (avg_pre_score - 2.5) * 8.0))
-            + LEAST(1.0, weight_sum / GREATEST(1.0, starter_count * 1.5)) * 
-            LEAST(100.0, GREATEST(0.0, class_base_score + (((8.0 * 2.1 + points_sum) / (8.0 + weight_sum)) - 2.1) * 8.0))
+            + LEAST(1.0, weight_sum / GREATEST(1.0, starter_count * 0.8)) * 
+            LEAST(100.0, GREATEST(0.0, class_base_score + (((6.0 * 2.7 + points_sum) / (6.0 + weight_sum)) - 2.7) * 8.0))
         , 1) AS current_level_score,
 
         next3_total_runs,

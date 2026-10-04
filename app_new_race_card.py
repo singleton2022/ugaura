@@ -263,7 +263,7 @@ def render_standard_card(target_race_df, selected_date, target_rank, target_clas
     legend_html = """<div>
         <span style="font-weight: bold; color: #38bdf8;">💡 過去5走（実走スコア表示）:</span><br>
         <span style="color: #f1f5f9;">【上段】自馬着順(上位5頭平均差) ｜ <span style="background-color: #dc2626; color: #fff; padding: 1px 4px; border-radius: 3px; font-weight: bold;">S</span>〜<span style="background-color: #94a3b8; color: #fff; padding: 1px 4px; border-radius: 3px; font-weight: bold;">D</span> 実走スコア [ランク スコア] <span style="color: #94a3b8; font-size: 0.88em;">(※レースレベルに上位5頭平均差を加算・減算)</span></span><br>
-        <span style="color: #f1f5f9;">【下段】出走各馬の次3走成績 (1着数-2着数-3着数 / 走数) [勝馬次走]</span>
+        <span style="color: #f1f5f9;">【下段】出走各馬の次3走ベスト成績 (勝ち上がり頭数-2着頭数-3着頭数 / 消化頭数) [勝馬次走]</span>
     </div>"""
     
     render_header_and_legend(target_race_df, selected_date, legend_html)
