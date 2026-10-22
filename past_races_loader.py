@@ -342,7 +342,7 @@ def load_race_level_snapshot_map(unique_past_ids, current_race_date, db_path='C:
 
 @st.cache_data(show_spinner=False)
 def load_past_races_for_horses(horse_id_list, current_race_date, db_path='C:/Ugaura/sqlite/jra_race.db'):
-    # Cache version: 2026-10-01 08:00 (Point-in-Time Snapshot by current_race_date)
+    # Cache version: 2026-10-23 08:15 (UCV v2.1 recalculated)
     horse_id_list = list(horse_id_list)
     if not horse_id_list:
         return pd.DataFrame()

@@ -569,8 +569,6 @@ def render_standard_card(target_race_df, selected_date, target_rank, target_clas
 <th>性齢</th>
 <th>騎手</th>
 <th>斤量</th>
-<th>オッズ</th>
-<th>馬体重</th>
 <th class="col-int"></th>
 <th colspan="2">前走</th>
 <th class="col-int"></th>
@@ -608,8 +606,455 @@ def render_standard_card(target_race_df, selected_date, target_rank, target_clas
 <td>{r['性齢']}</td>
 <td>{r['騎手']}</td>
 <td>{r['斤量']}</td>
-<td>{r['オッズ']}</td>
-<td>{r['馬体重']}</td>
+<td class="col-int" style="{i0_st}">{i0_char}</td>
+<td style="{r['r1_td_style']}">{r['r1_td_label']}</td>
+<td style="{c1_style}">{r['r1']}</td>
+<td class="col-int" style="{i1_st}">{i1_char}</td>
+<td style="{r['r2_td_style']}">{r['r2_td_label']}</td>
+<td style="{c2_style}">{r['r2']}</td>
+<td class="col-int" style="{i2_st}">{i2_char}</td>
+<td style="{r['r3_td_style']}">{r['r3_td_label']}</td>
+<td style="{c3_style}">{r['r3']}</td>
+<td class="col-int" style="{i3_st}">{i3_char}</td>
+<td style="{r['r4_td_style']}">{r['r4_td_label']}</td>
+<td style="{c4_style}">{r['r4']}</td>
+<td class="col-int" style="{i4_st}">{i4_char}</td>
+<td style="{r['r5_td_style']}">{r['r5_td_label']}</td>
+<td style="{c5_style}">{r['r5']}</td>
+</tr>"""
+
+    html_code += """</tbody>
+</table>
+</div>"""
+
+    if hasattr(st, 'html'):
+        st.html(html_code)
+    else:
+        st.markdown(html_code, unsafe_allow_html=True)
+
+def render_ucv_card(target_race_df, selected_date, target_rank, target_class_name):
+    legend_html = """<div>
+        <span style="font-weight: bold; color: #38bdf8;">💡 UCVサマリー & 過去5走（全クラス統一UCV / UCV 3F 偏差値表示）:</span><br>
+        <span style="color: #cbd5e1; font-size: 0.88em;">
+            【サマリー】<span style="background-color: #dc2626; color: #fff; padding: 1px 4px; border-radius: 3px; font-weight: bold;">前走順</span> レース内前走UCV順位 ｜ 
+            <span style="color: #38bdf8; font-weight: bold;">最高UCV / 平均UCV</span> 過去5走の最高値・平均値偏差値 [レース内順位]
+        </span><br>
+        <span style="color: #f1f5f9;">【上段】自馬着順(着差) ｜ 
+            <span style="background-color: #7c3aed; color: #fff; padding: 1px 4px; border-radius: 3px; font-weight: bold;">80以上</span> 
+            <span style="background-color: #dc2626; color: #fff; padding: 1px 4px; border-radius: 3px; font-weight: bold;">75以上</span> 
+            <span style="background-color: #ea580c; color: #fff; padding: 1px 4px; border-radius: 3px; font-weight: bold;">68以上</span> 
+            <span style="background-color: #2563eb; color: #fff; padding: 1px 4px; border-radius: 3px; font-weight: bold;">60以上</span> 
+            <span style="background-color: #0d9488; color: #fff; padding: 1px 4px; border-radius: 3px; font-weight: bold;">52以上</span> 
+            <span style="background-color: #64748b; color: #fff; padding: 1px 4px; border-radius: 3px; font-weight: bold;">52未満</span> UCV [統一走破偏差値] <span style="color: #94a3b8; font-size: 0.88em;">(紫:重賞級 / 赤:OP・3勝勝ち級 / 橙:2勝勝ち級 / 青:1勝勝ち級)</span>
+        </span><br>
+        <span style="color: #f1f5f9;">【下段】上がり3Fタイム ｜ 
+            <span style="background-color: #dc2626; color: #fff; padding: 1px 4px; border-radius: 3px; font-weight: bold;">62以上</span> 
+            <span style="background-color: #ea580c; color: #fff; padding: 1px 4px; border-radius: 3px; font-weight: bold;">58以上</span> 
+            <span style="background-color: #2563eb; color: #fff; padding: 1px 4px; border-radius: 3px; font-weight: bold;">54以上</span> 
+            <span style="background-color: #0d9488; color: #fff; padding: 1px 4px; border-radius: 3px; font-weight: bold;">50以上</span> 
+            <span style="background-color: #64748b; color: #fff; padding: 1px 4px; border-radius: 3px; font-weight: bold;">50未満</span> 3F [上がり3F偏差値]
+        </span>
+    </div>"""
+    
+    render_header_and_legend(target_race_df, selected_date, legend_html)
+
+    horse_id_list = target_race_df['horse_id'].unique().tolist()
+    past_df = load_past_races_for_horses(tuple(horse_id_list), selected_date)
+
+    past_5_map = {}
+    horse_ucv_summary = {h_id: {'prev_dev': None, 'max_dev': None, 'avg_dev': None} for h_id in horse_id_list}
+
+    if not past_df.empty:
+        for h_id, group in past_df.groupby('horse_id'):
+            past_5_map[h_id] = {}
+            g5 = group[group['rn'].between(1, 5)]
+            
+            # 前走 (rn == 1)
+            r1_rows = g5[g5['rn'] == 1]
+            if not r1_rows.empty:
+                u1 = r1_rows['ucv_score'].iloc[0]
+                if pd.notna(u1):
+                    horse_ucv_summary[h_id]['prev_dev'] = 50.0 + (float(u1) * 10.0)
+
+            # 過去5走のUCVリスト
+            valid_ucvs = [float(x) for x in g5['ucv_score'].dropna().tolist() if pd.notna(x)]
+            if valid_ucvs:
+                max_u = max(valid_ucvs)
+                avg_u = float(np.mean(valid_ucvs))
+                horse_ucv_summary[h_id]['max_dev'] = 50.0 + (max_u * 10.0)
+                horse_ucv_summary[h_id]['avg_dev'] = 50.0 + (avg_u * 10.0)
+
+            for _, row in group.iterrows():
+                rn = int(row['rn'])
+                if 1 <= rn <= 5:
+                    order = row.get('final_order', '')
+                    if pd.notna(order) and str(order).strip().isdigit() and int(order) > 0:
+                        self_order_str = f"{int(order)}着"
+                    else:
+                        self_order_str = ""
+                        
+                    time_diff_str = row.get('winner_time_diff_str', '')
+                    td_disp = f"({time_diff_str})" if time_diff_str else ""
+
+                    # UCV バッジの生成（偏差値換算: 50 + Z * 10）
+                    ucv_val = row.get('ucv_score')
+                    if pd.notna(ucv_val):
+                        ucv_num = float(ucv_val)
+                        dev_score = 50.0 + (ucv_num * 10.0)
+                        if dev_score >= 80.0:
+                            ucv_color = "background-color: #7c3aed; color: #ffffff;"  # 紫: 重賞・G1級（超抜）
+                        elif dev_score >= 75.0:
+                            ucv_color = "background-color: #dc2626; color: #ffffff;"  # 赤: オープン・3勝勝ち級
+                        elif dev_score >= 68.0:
+                            ucv_color = "background-color: #ea580c; color: #ffffff;"  # 橙: 2勝勝ち・3勝好走級
+                        elif dev_score >= 60.0:
+                            ucv_color = "background-color: #2563eb; color: #ffffff;"  # 青: 1勝勝ち・2勝標準級
+                        elif dev_score >= 52.0:
+                            ucv_color = "background-color: #0d9488; color: #ffffff;"  # 青緑: 未勝利勝ち級
+                        else:
+                            ucv_color = "background-color: #64748b; color: #ffffff;"  # 灰: 下級条件標準
+                        badge_ucv = f"<span title='走破タイム偏差値: {dev_score:.1f} (Zスコア: {ucv_num:+.2f})' style='{ucv_color} font-weight: bold; padding: 1px 5px; border-radius: 3px; font-size: 0.85em; margin-left: 4px; cursor: help;'>UCV {dev_score:.1f}</span>"
+                    else:
+                        badge_ucv = "<span style='color: #64748b; font-size: 0.85em; margin-left: 4px;'>UCV -</span>"
+
+                    line1 = f"<span>{self_order_str}{td_disp}</span>{badge_ucv}".strip()
+
+                    # UCV 3F バッジの生成（偏差値換算: 50 + Z * 10）
+                    ucv_3f_val = row.get('ucv_3f_score')
+                    if pd.notna(ucv_3f_val):
+                        u3f_num = float(ucv_3f_val)
+                        dev_3f = 50.0 + (u3f_num * 10.0)
+                        if dev_3f >= 62.0:
+                            u3f_color = "background-color: #dc2626; color: #ffffff;"
+                        elif dev_3f >= 58.0:
+                            u3f_color = "background-color: #ea580c; color: #ffffff;"
+                        elif dev_3f >= 54.0:
+                            u3f_color = "background-color: #2563eb; color: #ffffff;"
+                        elif dev_3f >= 50.0:
+                            u3f_color = "background-color: #0d9488; color: #ffffff;"
+                        else:
+                            u3f_color = "background-color: #64748b; color: #ffffff;"
+                        badge_u3f = f"<span title='上がり3F偏差値: {dev_3f:.1f} (Zスコア: {u3f_num:+.2f})' style='{u3f_color} font-weight: bold; padding: 1px 5px; border-radius: 3px; font-size: 0.85em; margin-left: 4px; cursor: help;'>3F {dev_3f:.1f}</span>"
+                    else:
+                        badge_u3f = "<span style='color: #64748b; font-size: 0.85em; margin-left: 4px;'>3F -</span>"
+
+                    last_3f = row.get('last_3f_fmt', '')
+                    time_str = f"{last_3f}s" if last_3f and last_3f != '-' else ""
+                    line2 = f"<span style='font-size: 0.88em; color: #64748b;'>{time_str}</span>{badge_u3f}".strip()
+                    
+                    cell_html = f"<div style='line-height: 1.3;'><div>{line1}</div><div>{line2}</div></div>"
+                    
+                    p_cond = row.get('cond_code_youngest', None)
+                    p_grade = row.get('grade_code', None)
+                    p_course = row.get('course_code', None)
+                    p_rank, p_cname = get_class_info(p_cond, p_grade, p_course)
+                    
+                    is_p_local = False
+                    if p_course is not None:
+                        try:
+                            pc_num = int(str(p_course).strip())
+                            if pc_num not in range(1, 11):
+                                is_p_local = True
+                        except (ValueError, TypeError):
+                            is_p_local = True
+
+                    if is_p_local or p_cname == '地方' or p_rank == 0.5:
+                        comp = 'local'
+                    elif p_rank == target_rank:
+                        comp = 'same'
+                    elif p_rank < target_rank:
+                        comp = 'lower'
+                    else:
+                        comp = 'higher'
+
+                    track_code = row.get('track_code', None)
+                    distance = row.get('distance', None)
+                    td_label, td_style = get_track_dist_label(track_code, distance, p_course)
+                    
+                    past_5_map[h_id][rn] = {
+                        'text': cell_html,
+                        'comp': comp,
+                        'class_name': p_cname,
+                        'race_date': row.get('race_date', ''),
+                        'track_dist_label': td_label,
+                        'track_dist_style': td_style,
+                    }
+
+    # レース内ランキングの計算関数
+    def calc_ranks(val_dict):
+        valid_items = [(hid, val) for hid, val in val_dict.items() if val is not None]
+        valid_items.sort(key=lambda x: x[1], reverse=True)
+        ranks = {hid: None for hid in val_dict}
+        for i, (hid, val) in enumerate(valid_items):
+            if i > 0 and val == valid_items[i-1][1]:
+                ranks[hid] = ranks[valid_items[i-1][0]]
+            else:
+                ranks[hid] = i + 1
+        return ranks
+
+    prev_dict = {hid: horse_ucv_summary[hid]['prev_dev'] for hid in horse_ucv_summary}
+    max_dict = {hid: horse_ucv_summary[hid]['max_dev'] for hid in horse_ucv_summary}
+    avg_dict = {hid: horse_ucv_summary[hid]['avg_dev'] for hid in horse_ucv_summary}
+
+    prev_ranks = calc_ranks(prev_dict)
+    max_ranks = calc_ranks(max_dict)
+    avg_ranks = calc_ranks(avg_dict)
+
+    def get_ucv_dev_badge_style(dev):
+        if dev is None:
+            return "background-color: #64748b; color: #ffffff;"
+        if dev >= 80.0:
+            return "background-color: #7c3aed; color: #ffffff;"  # 紫: 重賞・G1級
+        elif dev >= 75.0:
+            return "background-color: #dc2626; color: #ffffff;"  # 赤: OP・3勝勝ち級
+        elif dev >= 68.0:
+            return "background-color: #ea580c; color: #ffffff;"  # 橙: 2勝勝ち・3勝好走級
+        elif dev >= 60.0:
+            return "background-color: #2563eb; color: #ffffff;"  # 青: 1勝勝ち・2勝標準級
+        elif dev >= 52.0:
+            return "background-color: #0d9488; color: #ffffff;"  # 青緑: 未勝利勝ち級
+        else:
+            return "background-color: #64748b; color: #ffffff;"  # 灰: 下級条件標準
+
+    def format_prev_rank_cell(rank):
+        if rank is None:
+            return "<span style='color: #64748b; font-size: 0.9em;'>-</span>"
+        if rank == 1:
+            return f"<span title='前走UCV 1位 (勝率21.5%・複勝率49.0%・単勝回収率82.0%)' style='background-color: #dc2626; color: #ffffff; font-weight: bold; padding: 2px 7px; border-radius: 4px; font-size: 0.95em; box-shadow: 0 1px 2px rgba(0,0,0,0.25); cursor: help;'>{rank}</span>"
+        elif rank == 2:
+            return f"<span style='background-color: #ea580c; color: #ffffff; font-weight: bold; padding: 2px 6px; border-radius: 4px; font-size: 0.92em;'>{rank}</span>"
+        elif rank == 3:
+            return f"<span style='background-color: #2563eb; color: #ffffff; font-weight: bold; padding: 2px 6px; border-radius: 4px; font-size: 0.92em;'>{rank}</span>"
+        elif rank in [4, 5]:
+            return f"<span style='background-color: #0d9488; color: #ffffff; font-weight: 600; padding: 1px 5px; border-radius: 3px; font-size: 0.88em;'>{rank}</span>"
+        else:
+            return f"<span style='color: #64748b; font-weight: 500; font-size: 0.9em;'>{rank}</span>"
+
+    def format_summary_stat_cell(dev, rank, title_prefix=""):
+        if dev is None:
+            return "<span style='color: #64748b; font-size: 0.9em;'>-</span>"
+        b_style = get_ucv_dev_badge_style(dev)
+        if rank == 1:
+            r_html = f"<span style='color: #ef4444; font-weight: bold; font-size: 0.82em;'>{rank}位</span>"
+        elif rank in [2, 3]:
+            r_html = f"<span style='color: #38bdf8; font-weight: bold; font-size: 0.82em;'>{rank}位</span>"
+        else:
+            r_html = f"<span style='color: #94a3b8; font-size: 0.82em;'>{rank}位</span>"
+            
+        return f"""<div style='line-height: 1.25;' title='{title_prefix}: 偏差値 {dev:.1f} (レース内 {rank}位)'>
+            <div><span style='{b_style} font-weight: bold; padding: 1px 5px; border-radius: 3px; font-size: 0.85em;'>{dev:.1f}</span></div>
+            <div style='margin-top: 1px;'>{r_html}</div>
+        </div>"""
+
+    card_rows = []
+    comp_matrix = []
+    interval_matrix = []
+    
+    sex_map = {'1': '牡', '2': '牝', '3': 'セ'}
+
+    for idx, row in target_race_df.iterrows():
+        h_id = row['horse_id']
+        h_num = str(row['horse_number'])
+        bracket = str(row['bracket_number']) if pd.notna(row['bracket_number']) else ''
+        h_name = row['horse_name']
+        
+        sex = sex_map.get(str(row['sex_code']), '')
+        
+        raw_age = row.get('horse_age', '')
+        if pd.notna(raw_age) and str(raw_age).strip().isdigit() and int(raw_age) > 0:
+            age_str = str(int(raw_age))
+        else:
+            age_str = ""
+            
+        sex_age = f"{sex}{age_str}"
+        
+        weight_carried = format_weight_carried(row.get('weight_carried', ''))
+        jockey = row['jockey_name_short'] if pd.notna(row['jockey_name_short']) else ''
+        
+        odds_fmt = format_win_odds(row.get('win_odds', ''))
+
+        h_weight = format_horse_weight(
+            row.get('horse_weight', ''), 
+            row.get('weight_change_sign', ''), 
+            row.get('weight_change', '')
+        )
+
+        p_data = past_5_map.get(h_id, {})
+        r1 = p_data.get(1, {'text': '', 'comp': 'none', 'race_date': '', 'track_dist_label': '', 'track_dist_style': ''})
+        r2 = p_data.get(2, {'text': '', 'comp': 'none', 'race_date': '', 'track_dist_label': '', 'track_dist_style': ''})
+        r3 = p_data.get(3, {'text': '', 'comp': 'none', 'race_date': '', 'track_dist_label': '', 'track_dist_style': ''})
+        r4 = p_data.get(4, {'text': '', 'comp': 'none', 'race_date': '', 'track_dist_label': '', 'track_dist_style': ''})
+        r5 = p_data.get(5, {'text': '', 'comp': 'none', 'race_date': '', 'track_dist_label': '', 'track_dist_style': ''})
+
+        i0_char, i0_style = calc_interval_info(selected_date, r1.get('race_date', ''))
+        i1_char, i1_style = calc_interval_info(r1.get('race_date', ''), r2.get('race_date', ''))
+        i2_char, i2_style = calc_interval_info(r2.get('race_date', ''), r3.get('race_date', ''))
+        i3_char, i3_style = calc_interval_info(r3.get('race_date', ''), r4.get('race_date', ''))
+        i4_char, i4_style = calc_interval_info(r4.get('race_date', ''), r5.get('race_date', ''))
+
+        # UCVサマリー
+        p_rank = prev_ranks.get(h_id)
+        m_dev = horse_ucv_summary[h_id]['max_dev']
+        m_rank = max_ranks.get(h_id)
+        a_dev = horse_ucv_summary[h_id]['avg_dev']
+        a_rank = avg_ranks.get(h_id)
+
+        card_rows.append({
+            '馬番': int(h_num),
+            '枠': bracket,
+            '馬名': h_name,
+            '性齢': sex_age,
+            '騎手': jockey,
+            '斤量': weight_carried,
+            'オッズ': odds_fmt,
+            '馬体重': h_weight,
+            'prev_rank_html': format_prev_rank_cell(p_rank),
+            'max_ucv_html': format_summary_stat_cell(m_dev, m_rank, "過去5走最高UCV"),
+            'avg_ucv_html': format_summary_stat_cell(a_dev, a_rank, "過去5走平均UCV"),
+            'r1': r1['text'],
+            'r1_td_label': r1['track_dist_label'],
+            'r1_td_style': r1['track_dist_style'],
+            'r2': r2['text'],
+            'r2_td_label': r2['track_dist_label'],
+            'r2_td_style': r2['track_dist_style'],
+            'r3': r3['text'],
+            'r3_td_label': r3['track_dist_label'],
+            'r3_td_style': r3['track_dist_style'],
+            'r4': r4['text'],
+            'r4_td_label': r4['track_dist_label'],
+            'r4_td_style': r4['track_dist_style'],
+            'r5': r5['text'],
+            'r5_td_label': r5['track_dist_label'],
+            'r5_td_style': r5['track_dist_style'],
+        })
+        
+        comp_matrix.append({
+            1: r1['comp'],
+            2: r2['comp'],
+            3: r3['comp'],
+            4: r4['comp'],
+            5: r5['comp']
+        })
+
+        interval_matrix.append({
+            0: (i0_char, i0_style),
+            1: (i1_char, i1_style),
+            2: (i2_char, i2_style),
+            3: (i3_char, i3_style),
+            4: (i4_char, i4_style),
+        })
+
+    disp_df = pd.DataFrame(card_rows).sort_values('馬番').reset_index(drop=True)
+    card_rows = disp_df.to_dict(orient='records')
+
+    base_bg_map = {
+        'same': 'background-color: #FFF59D;',
+        'lower': 'background-color: #81D4FA;',
+        'higher': 'background-color: #CE93D8;',
+        'local': 'background-color: #E0E0E0;',
+        'none': ''
+    }
+
+    def build_cell_style(comp):
+        bg = base_bg_map.get(comp, '')
+        return f"{bg} color: #000; font-weight: bold;" if bg else ""
+
+    html_code = """<style>
+.race-card-container {
+    width: 100%;
+    overflow-x: auto;
+    margin-bottom: 20px;
+}
+.race-card-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+.race-card-table th, .race-card-table td {
+    border: 1px solid #dcdfe6;
+    padding: 6px 4px;
+    text-align: center;
+    vertical-align: middle;
+    white-space: nowrap;
+}
+.race-card-table th {
+    background-color: #f2f4f7;
+    color: #333;
+    font-weight: 600;
+}
+.race-card-table td.col-int, .race-card-table th.col-int {
+    width: 18px !important;
+    min-width: 18px !important;
+    max-width: 18px !important;
+    padding: 2px 0px !important;
+    font-size: 12px;
+    font-weight: bold;
+}
+.race-card-table th.col-ucv-summary, .race-card-table td.col-ucv-summary {
+    padding: 4px 3px !important;
+    text-align: center;
+    vertical-align: middle;
+}
+.race-card-table td.horse-name {
+    text-align: left;
+    padding-left: 8px;
+    font-weight: bold;
+}
+</style>
+<div class="race-card-container">
+<table class="race-card-table">
+<thead>
+<tr>
+<th>枠</th>
+<th>馬番</th>
+<th>馬名</th>
+<th>性齢</th>
+<th>騎手</th>
+<th>斤量</th>
+<th class="col-ucv-summary" style="min-width: 38px; background-color: #1e293b; color: #f8fafc; border-left: 2px solid #3b82f6;">前走<br>順</th>
+<th class="col-ucv-summary" style="min-width: 65px; background-color: #1e293b; color: #f8fafc;">最高UCV<br><span style="font-size: 0.78em; font-weight: normal; color: #94a3b8;">(順位)</span></th>
+<th class="col-ucv-summary" style="min-width: 65px; background-color: #1e293b; color: #f8fafc; border-right: 2px solid #3b82f6;">平均UCV<br><span style="font-size: 0.78em; font-weight: normal; color: #94a3b8;">(順位)</span></th>
+<th class="col-int"></th>
+<th colspan="2">前走</th>
+<th class="col-int"></th>
+<th colspan="2">２走前</th>
+<th class="col-int"></th>
+<th colspan="2">３走前</th>
+<th class="col-int"></th>
+<th colspan="2">４走前</th>
+<th class="col-int"></th>
+<th colspan="2">５走前</th>
+</tr>
+</thead>
+<tbody>"""
+
+    for i, r in enumerate(card_rows):
+        comp = comp_matrix[i]
+        int_m = interval_matrix[i]
+        
+        c1_style = build_cell_style(comp[1])
+        c2_style = build_cell_style(comp[2])
+        c3_style = build_cell_style(comp[3])
+        c4_style = build_cell_style(comp[4])
+        c5_style = build_cell_style(comp[5])
+
+        i0_char, i0_st = int_m[0]
+        i1_char, i1_st = int_m[1]
+        i2_char, i2_st = int_m[2]
+        i3_char, i3_st = int_m[3]
+        i4_char, i4_st = int_m[4]
+
+        html_code += f"""<tr>
+<td>{r['枠']}</td>
+<td>{r['馬番']}</td>
+<td class="horse-name">{r['馬名']}</td>
+<td>{r['性齢']}</td>
+<td>{r['騎手']}</td>
+<td>{r['斤量']}</td>
+<td class="col-ucv-summary" style="border-left: 2px solid #3b82f6;">{r['prev_rank_html']}</td>
+<td class="col-ucv-summary">{r['max_ucv_html']}</td>
+<td class="col-ucv-summary" style="border-right: 2px solid #3b82f6;">{r['avg_ucv_html']}</td>
 <td class="col-int" style="{i0_st}">{i0_char}</td>
 <td style="{r['r1_td_style']}">{r['r1_td_label']}</td>
 <td style="{c1_style}">{r['r1']}</td>
@@ -830,8 +1275,6 @@ def render_analysis_card(target_race_df, selected_date):
 <th>性齢</th>
 <th>騎手</th>
 <th>斤量</th>
-<th>オッズ</th>
-<th>馬体重</th>
 <th>競馬場別成績</th>
 <th>回り別成績</th>
 <th>月別成績</th>"""
@@ -867,8 +1310,6 @@ def render_analysis_card(target_race_df, selected_date):
 <td>{r['性齢']}</td>
 <td>{r['騎手']}</td>
 <td>{r['斤量']}</td>
-<td>{r['オッズ']}</td>
-<td>{r['馬体重']}</td>
 <td class="{c_class}">{r['course_html']}</td>
 <td class="{rot_class}">{r['rot_html']}</td>
 <td class="{s_class}">{r['season_html']}</td>"""
@@ -903,7 +1344,7 @@ def main():
             background-color: transparent !important;
         }
         .block-container {
-            padding-top: 2.0rem !important;
+            padding-top: 1.0rem !important;
             padding-bottom: 0.5rem !important;
         }
         h1 {
@@ -922,9 +1363,7 @@ def main():
     """, unsafe_allow_html=True)
 
     st.sidebar.header("画面切替")
-    view_mode = st.sidebar.radio("画面選択", ["標準出馬表", "分析出馬表"], index=0)
-
-    st.title(f"🏇 出馬表 ({view_mode})")
+    view_mode = st.sidebar.radio("画面選択", ["実走スコア", "UCV", "分析出馬表"], index=0)
 
     dates = fetch_dates()
     if not dates:
@@ -967,8 +1406,10 @@ def main():
     target_course = target_race_df['course_code'].iloc[0] if 'course_code' in target_race_df.columns else None
     target_rank, target_class_name = get_class_info(target_cond, target_grade, target_course)
 
-    if view_mode == "標準出馬表":
+    if view_mode == "実走スコア":
         render_standard_card(target_race_df, selected_date, target_rank, target_class_name)
+    elif view_mode == "UCV":
+        render_ucv_card(target_race_df, selected_date, target_rank, target_class_name)
     else:
         render_analysis_card(target_race_df, selected_date)
 

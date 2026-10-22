@@ -19,6 +19,24 @@ def get_turf_courses(db_path, year_val, month_day_val):
     conn.close()
     return [row[0] for row in rows]
 
+def has_unconfirmed_horse_number(db_path, year_val, month_day_val):
+    if not os.path.exists(db_path):
+        return False
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    query = """
+        SELECT 1
+        FROM horse_race_info
+        WHERE year = ?
+          AND month_day = ?
+          AND (horse_number = '00' OR horse_number = '0' OR CAST(horse_number AS INTEGER) = 0)
+        LIMIT 1
+    """
+    cursor.execute(query, (year_val, month_day_val))
+    row = cursor.fetchone()
+    conn.close()
+    return row is not None
+
 def get_turf_race_rows(db_path, year_val, month_day_val):
     if not os.path.exists(db_path):
         return []
@@ -77,9 +95,21 @@ def generate_cushion_csv(target_date=None, cushion_map=None, drive_dir=None):
     year_val = target_date[:4]
     month_day_val = target_date[4:]
 
+    if not os.path.exists(db_path):
+        print(f"エラー: データベースファイル '{db_path}' が見つかりません。")
+        return False
+
+    if has_unconfirmed_horse_number(db_path, year_val, month_day_val):
+        print(f"エラー: {target_date} は馬番が確定していません（馬番が'00'のデータが存在します）。入力できません。")
+        return False
+
     rows = get_turf_race_rows(db_path, year_val, month_day_val)
     if not rows:
         print(f"{target_date} \u306e\u829d\u30ec\u30fc\u30b9\u306e\u30ec\u30b3\u30fc\u30c9\u306f\u898b\u3064\u304b\u308a\u307e\u305b\u3093\u3067\u3057\u305f\u3002")
+        return False
+
+    if any(str(row[6]).zfill(2) == '00' for row in rows):
+        print(f"エラー: {target_date} の芝レースに馬番が未確定（'00'）のデータが含まれています。入力できません。")
         return False
 
     if cushion_map is None:

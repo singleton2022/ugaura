@@ -4,7 +4,8 @@ from datetime import date
 from generate_cushion_csv import (
     COURSE_NAME_MAP,
     get_turf_courses,
-    generate_cushion_csv
+    generate_cushion_csv,
+    has_unconfirmed_horse_number
 )
 from generate_moisture_csv import (
     get_dirt_courses,
@@ -33,6 +34,10 @@ def main():
 
     if not os.path.exists(db_path):
         print(f"\u30a8\u30e9\u30fc: \u30c7\u30fc\u30bf\u30d9\u30fc\u30b9\u30d5\u30a1\u30a4\u30eb '{db_path}' \u304c\u898b\u3064\u304b\u308a\u307e\u305b\u3093\u3002")
+        return
+
+    if has_unconfirmed_horse_number(db_path, year_val, month_day_val):
+        print(f"エラー: {target_date} は馬番が確定していません（馬番が'00'のデータが存在します）。入力できません。")
         return
 
     turf_courses = get_turf_courses(db_path, year_val, month_day_val)
